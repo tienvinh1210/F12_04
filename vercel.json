@@ -1,0 +1,34 @@
+{
+  "version": 2,
+  "builds": [
+    { "src": "api/index.py", "use": "@vercel/python" },
+    { "src": "frontend/**", "use": "@vercel/static" }
+  ],
+  "routes": [
+    { "src": "/api/(.*)", "dest": "api/index.py" },
+    { "src": "/assets/(.*)", "dest": "/frontend/assets/$1" },
+    { "src": "/css/(.*)", "dest": "/frontend/css/$1" },
+    { "src": "/js/(.*)", "dest": "/frontend/js/$1" },
+    { "src": "/login.html", "dest": "/frontend/login.html" },
+    { "src": "/dashboard.html", "dest": "/frontend/dashboard.html" },
+    { "src": "/", "dest": "/frontend/index.html" },
+    { "src": "/(.*)", "dest": "/frontend/$1" }
+  ],
+  "crons": [
+    { "path": "/api/email/process-due", "schedule": "*/15 * * * *" }
+  ],
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 30
+    }
+  },
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" }
+      ]
+    }
+  ]
+}

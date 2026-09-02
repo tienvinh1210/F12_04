@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login — Livestock Dashboard</title>
+  <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/pages.css">
+</head>
+<body>
+  <div class="login-page">
+    <div class="login-bg" role="img" aria-label="Pastoral landscape"></div>
+    <div class="login-panel">
+      <div class="login-card">
+        <h1>Welcome to Livestock Dashboard</h1>
+        <p class="subtitle">Advanced Analytics for Livestock Management</p>
+        <form id="login-form">
+          <div class="form-group">
+            <label for="username">Username</label>
+            <input type="text" id="username" name="username" required autocomplete="username" autofocus>
+          </div>
+          <div class="form-group">
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" required autocomplete="current-password">
+          </div>
+          <button type="submit" class="btn btn-primary btn-block">Sign In</button>
+          <p id="login-error" class="login-error hidden"></p>
+        </form>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var h = location.hostname, p = location.port;
+      if ((h === 'localhost' || h === '127.0.0.1' || h === '[::1]') && p && p !== '8000') {
+        window.API_URL = 'http://' + (h === '[::1]' ? 'localhost' : h) + ':8000/api';
+      }
+    })();
+  </script>
+  <script src="/js/api.js"></script>
+  <script src="/js/auth.js"></script>
+</body>
+</html>

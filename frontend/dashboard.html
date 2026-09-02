@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard — Livestock Analytics</title>
+  <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/pages.css">
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+</head>
+<body>
+  <header>
+    <div class="logo-bar" id="logo-bar" aria-label="Partner logos"></div>
+    <nav class="navbar" aria-label="Main navigation">
+      <div class="nav-tabs" role="tablist">
+        <button class="nav-tab active" data-page="summary" role="tab">Summary Stats</button>
+        <button class="nav-tab" data-page="timeseries" role="tab">Time Series</button>
+        <button class="nav-tab" data-page="distributions" role="tab">Distributions</button>
+        <button class="nav-tab" data-page="cohorts" role="tab">Cohorts</button>
+        <button class="nav-tab" data-page="data-management" role="tab">Data Mgmt</button>
+        <button class="nav-tab" data-page="customise" role="tab">Customise</button>
+        <button class="nav-tab" data-page="reports" role="tab">Reports</button>
+      </div>
+      <button id="logout-btn" class="btn btn-secondary nav-logout"><i class="fa fa-sign-out-alt"></i> Logout</button>
+    </nav>
+  </header>
+
+  <div class="dashboard-layout">
+    <aside class="sidebar" id="sidebar" aria-label="Data filters">
+      <h2>Data Filters</h2>
+      <div class="filter-row">
+        <div class="form-group"><label for="filter-year">Year</label><select id="filter-year"></select></div>
+        <div class="form-group"><label for="filter-month">Month</label><select id="filter-month"></select></div>
+        <div class="form-group"><label for="filter-day">Day</label><select id="filter-day"></select></div>
+      </div>
+      <div class="filter-row-2">
+        <div class="form-group"><label>Sex</label><div class="multi-select" id="filter-sex"></div>
+          <div class="filter-links"><a data-select-all="sex">Select All</a><a data-invert="sex">Invert</a></div></div>
+        <div class="form-group"><label>Treatment</label><div class="multi-select" id="filter-treatment"></div>
+          <div class="filter-links"><a data-select-all="treatment">Select All</a><a data-invert="treatment">Invert</a></div></div>
+      </div>
+      <div class="filter-row-2">
+        <div class="form-group"><label>Breed</label><div class="multi-select" id="filter-breed"></div>
+          <div class="filter-links"><a data-select-all="breed">Select All</a><a data-invert="breed">Invert</a></div></div>
+        <div class="form-group"><label>Mob</label><div class="multi-select" id="filter-mob"></div>
+          <div class="filter-links"><a data-select-all="mob">Select All</a><a data-invert="mob">Invert</a></div></div>
+      </div>
+      <div class="form-group hidden" id="eid-section">
+        <label>EID</label><div class="multi-select" id="filter-eid"></div>
+        <div class="filter-links"><a data-select-all="eid">Select All</a><a data-invert="eid">Invert</a></div>
+      </div>
+      <div class="form-group"><label for="filter-measure">Measure</label><select id="filter-measure"></select></div>
+      <p class="record-count" id="record-count">Loading...</p>
+      <button class="btn btn-primary btn-block" id="clear-filters">Clear All Filters</button>
+      <div class="saved-views">
+        <h3>Saved Views</h3>
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <input type="text" id="view-name" placeholder="Enter view name..." class="form-control" style="flex:1">
+          <button class="btn btn-primary btn-sm" id="save-view">Save</button>
+        </div>
+        <div id="saved-views-list"></div>
+      </div>
+    </aside>
+
+    <main class="main-content" id="page-content" role="tabpanel"></main>
+  </div>
+
+  <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Toggle filters"><i class="fa fa-filter"></i></button>
+
+  <script>
+    (function () {
+      var h = location.hostname, p = location.port;
+      if ((h === 'localhost' || h === '127.0.0.1' || h === '[::1]') && p && p !== '8000') {
+        window.API_URL = 'http://' + (h === '[::1]' ? 'localhost' : h) + ':8000/api';
+      }
+    })();
+  </script>
+  <script src="/js/api.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/utils.js"></script>
+  <script src="/js/filters.js"></script>
+  <script src="/js/saved-views.js"></script>
+  <script src="/js/pages/summary.js"></script>
+  <script src="/js/pages/timeseries.js"></script>
+  <script src="/js/pages/distributions.js"></script>
+  <script src="/js/pages/cohorts.js"></script>
+  <script src="/js/pages/data-management.js"></script>
+  <script src="/js/pages/customise.js"></script>
+  <script src="/js/pages/reports.js"></script>
+  <script>
+    const PAGE_RENDERERS = {
+      summary: renderSummary,
+      timeseries: renderTimeseries,
+      distributions: renderDistributions,
+      cohorts: renderCohorts,
+      'data-management': renderDataManagement,
+      customise: renderCustomise,
+      reports: renderReports,
+    };
+
+    let currentPage = 'summary';
+
+    function renderCurrentPage() {
+      const container = document.getElementById('page-content');
+      const renderer = PAGE_RENDERERS[currentPage];
+      if (renderer) renderer(container);
+    }
+
+    function switchPage(page) {
+      currentPage = page;
+      document.querySelectorAll('.nav-tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.page === page);
+      });
+      renderCurrentPage();
+    }
+
+    document.querySelectorAll('.nav-tab').forEach(tab => {
+      tab.addEventListener('click', () => switchPage(tab.dataset.page));
+    });
+
+    document.getElementById('sidebar-toggle').addEventListener('click', () => {
+      document.getElementById('sidebar').classList.toggle('open');
+    });
+
+    async function loadLogos() {
+      try {
+        const data = await apiFetch(`/farms/${getFarmId()}/logos`);
+        const bar = document.getElementById('logo-bar');
+        bar.innerHTML = data.logos.map(l => `<img src="${l.url}" alt="${l.filename}">`).join('');
+      } catch { /* default gradient bar */ }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      if (!requireAuth()) return;
+      initSavedViews();
+      initFilters(() => {
+        if (currentPage !== 'customise') renderCurrentPage();
+      });
+      loadLogos();
+      renderCurrentPage();
+    });
+  </script>
+</body>
+</html>

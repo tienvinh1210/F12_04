@@ -1,0 +1,35 @@
+:root {
+  --primary: #1B4332;
+  --primary-light: #2D6A4F;
+  --primary-dark: #0F2B1F;
+  --secondary: #5C4033;
+  --accent: #B08968;
+  --danger: #7B241C;
+  --warning: #f0ad4e;
+  --info: #0dcaf0;
+  --bg: #f4f5f6;
+  --card-bg: #ffffff;
+  --text-primary: #2c3e50;
+  --text-secondary: #6c757d;
+  --border: #e9ecef;
+  --gradient-primary: linear-gradient(135deg, #1B4332 0%, #2D6A4F 100%);
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  --radius: 8px;
+  --sidebar-width: 350px;
+  --spacing: 8px;
+  --font: 'Poppins', system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+a { color: var(--primary-light); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.hidden { display: none !important; }
