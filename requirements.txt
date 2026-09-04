@@ -1,0 +1,12 @@
+# Streamlit Cloud + local Streamlit app
+# (Isolated from FastAPI deps — Streamlit Cloud installs only this file)
+streamlit==1.40.2
+plotly==5.24.1
+pandas==2.2.3
+numpy==2.2.1
+psycopg2-binary==2.9.10
+pydantic==2.10.4
+pydantic-settings==2.7.0
+passlib==1.7.4
+PyJWT==2.10.1
+python-dateutil==2.9.0.post0
