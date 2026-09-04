@@ -509,5 +509,12 @@ class FilterService:
         out = df.copy()
         if "date" in out.columns:
             out["date"] = out["date"].dt.strftime("%Y-%m-%d")
-        out = out.where(pd.notnull(out), None)
-        return out.to_dict(orient="records")
+        # Replace NaN/NaT with None so FastAPI/json.dumps won't fail.
+        records = out.astype(object).where(pd.notnull(out), None).to_dict(orient="records")
+        cleaned: list[dict] = []
+        for row in records:
+            cleaned.append({
+                k: (None if (isinstance(v, float) and (v != v or v in (float("inf"), float("-inf")))) else v)
+                for k, v in row.items()
+            })
+        return cleaned

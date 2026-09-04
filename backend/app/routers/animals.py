@@ -36,6 +36,22 @@ DATA_MGMT_COLUMNS = [
 ]
 
 
+def _json_safe(value):
+    """Coerce NaN/Inf/pandas NA to None for JSON responses."""
+    if value is None:
+        return None
+    if isinstance(value, float) and (value != value or value in (float("inf"), float("-inf"))):
+        return None
+    try:
+        import math
+
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            return None
+    except Exception:
+        pass
+    return value
+
+
 def _query_response(body: DataQueryRequest, user: CurrentUser) -> dict:
     assert_farm_access(user, body.farm_id)
 
@@ -77,7 +93,7 @@ def _query_response(body: DataQueryRequest, user: CurrentUser) -> dict:
     # Prefer a stable column set for the data table.
     slim_rows = []
     for row in page_rows:
-        slim = {col: row.get(col) for col in DATA_MGMT_COLUMNS}
+        slim = {col: _json_safe(row.get(col)) for col in DATA_MGMT_COLUMNS}
         if slim.get("treatment") is None:
             slim["treatment"] = "No Treatment"
         slim_rows.append(slim)
