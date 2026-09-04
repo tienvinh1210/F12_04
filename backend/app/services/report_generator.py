@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import io
 from datetime import datetime
 
@@ -11,23 +12,43 @@ import pandas as pd
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from app.constants import MEASURE_LABELS, MEASURE_UNITS
 from app.models.schemas import FilterState
-from app.services.chart_service import DistributionService, TimeseriesService
+from app.services.chart_service import CohortService, DistributionService, TimeseriesService
 from app.services.email_service import generate_filter_summary
-from app.services.filter_service import FilterService
 from app.services.summary_service import SummaryService
+
+
+def _normalize_chart_name(name: str) -> str:
+    key = (name or "").strip().lower().replace("_", " ")
+    if key in ("summary statistics", "summary", "stats"):
+        return "summary"
+    if key in ("time series", "timeseries", "ts"):
+        return "timeseries"
+    if key in ("distribution", "distributions", "hist", "histogram"):
+        return "distribution"
+    if key in ("cohorts", "cohort"):
+        return "cohorts"
+    return key
 
 
 class ReportGenerator:
     @staticmethod
     def generate_chart_png(
-        grouped_df: pd.DataFrame, chart_source: str, measure: str, filters: FilterState
+        grouped_df: pd.DataFrame,
+        chart_source: str,
+        measure: str,
+        filters: FilterState,
+        filtered_df: pd.DataFrame | None = None,
     ) -> bytes:
         fig, ax = plt.subplots(figsize=(10, 5))
-        if chart_source.lower() in ("time series", "timeseries"):
+        kind = _normalize_chart_name(chart_source)
+        filtered_df = filtered_df if filtered_df is not None else grouped_df
+
+        if kind == "timeseries":
             result = TimeseriesService.compute(grouped_df, measure)
             for group in set(s["group"] for s in result["series"] if "(trend)" not in s["group"]):
                 pts = [s for s in result["series"] if s["group"] == group]
@@ -38,7 +59,7 @@ class ReportGenerator:
             ax.set_title("Time Series")
             ax.legend(fontsize=8)
             plt.xticks(rotation=45, ha="right")
-        elif chart_source.lower() == "distribution":
+        elif kind == "distribution":
             result = DistributionService.compute(grouped_df, measure)
             for g in result["histogram"]["groups"]:
                 ax.hist(g["values"], bins=result["histogram"]["bins"], alpha=0.5, label=g["group"])
@@ -46,11 +67,32 @@ class ReportGenerator:
             ax.axvline(result["histogram"]["median"], color="#7B241C", linestyle=":", label="Median")
             ax.set_title("Distribution")
             ax.legend(fontsize=8)
+        elif kind == "cohorts":
+            result = CohortService.analyze(filtered_df, grouped_df, measure, 10, filters)
+            for cohort_name in ("top", "bottom"):
+                pts = [t for t in result["timeline"] if t["cohort"] == cohort_name]
+                if not pts:
+                    continue
+                pts = sorted(pts, key=lambda p: p["date"])
+                ax.plot(
+                    [p["date"] for p in pts],
+                    [p["value"] for p in pts],
+                    label=f"{cohort_name.title()} {result['percentile']}%",
+                    marker="o",
+                    markersize=3,
+                )
+            ax.set_title(f"Cohorts (top/bottom {result['percentile']}%)")
+            ax.set_ylabel(MEASURE_LABELS.get(measure, measure))
+            ax.legend(fontsize=8)
+            plt.xticks(rotation=45, ha="right")
+            if not result["timeline"]:
+                ax.axis("off")
+                ax.text(0.5, 0.5, "No cohort data for current filters", ha="center", va="center")
         else:
             stats = SummaryService.compute_stats(grouped_df, measure)
             rows = [["Group", "Window", "Mean", "Count"]]
             for g in stats[:5]:
-                for wk, w in g["windows"].items():
+                for _, w in g["windows"].items():
                     rows.append([g["full_group"][:30], w["label"], str(w["mean"]), str(w["count"])])
             ax.axis("off")
             table = ax.table(cellText=rows, loc="center", cellLoc="left")
@@ -66,16 +108,79 @@ class ReportGenerator:
         return buf.read()
 
     @staticmethod
+    def _append_summary_tables(story, styles, grouped_df: pd.DataFrame, measure: str) -> None:
+        stats = SummaryService.compute_stats(grouped_df, measure)
+        story.append(Paragraph("<b>Summary Statistics</b>", styles["Heading2"]))
+        if not stats:
+            story.append(Paragraph("No summary data for current filters.", styles["Normal"]))
+            return
+        for g in stats[:5]:
+            story.append(Paragraph(g["full_group"], styles["Heading3"]))
+            rows = [["Window", "Mean", "Min", "Max", "Median", "Count"]]
+            for w in g["windows"].values():
+                rows.append(
+                    [
+                        w["label"],
+                        str(w["mean"]),
+                        str(w["min"]),
+                        str(w["max"]),
+                        str(w["median"]),
+                        str(w["count"]),
+                    ]
+                )
+            tbl = Table(rows)
+            tbl.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.grey)]))
+            story.append(tbl)
+            story.append(Spacer(1, 8))
+
+    @staticmethod
+    def _append_cohort_tables(story, styles, filtered_df, grouped_df, filters, measure: str) -> None:
+        result = CohortService.analyze(filtered_df, grouped_df, measure, 10, filters)
+        story.append(Paragraph("<b>Cohorts</b>", styles["Heading2"]))
+        story.append(
+            Paragraph(
+                f"Top/bottom {result['percentile']}% of {result['total_animals']} animals",
+                styles["Normal"],
+            )
+        )
+        for label, block in (("Top", result["top"]), ("Bottom", result["bottom"])):
+            story.append(Paragraph(f"<b>{label} cohort</b>", styles["Heading3"]))
+            rows = [
+                ["Count", "Average", "Min", "Max"],
+                [
+                    str(block["count"]),
+                    str(block["average"]),
+                    str(block["min"]),
+                    str(block["max"]),
+                ],
+            ]
+            tbl = Table(rows)
+            tbl.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.grey)]))
+            story.append(tbl)
+            story.append(Spacer(1, 6))
+
+    @staticmethod
     def generate_pdf(
         filters: FilterState,
         grouped_df: pd.DataFrame,
         charts: list[str],
         farm_name: str,
+        filtered_df: pd.DataFrame | None = None,
     ) -> bytes:
+        filtered_df = filtered_df if filtered_df is not None else grouped_df
         buf = io.BytesIO()
-        doc = SimpleDocTemplate(buf, pagesize=A4)
+        doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=0.75 * inch, rightMargin=0.75 * inch)
         styles = getSampleStyleSheet()
         story = []
+        measure = filters.measure
+        selected = [_normalize_chart_name(c) for c in (charts or [])]
+        # Preserve user order while deduping
+        ordered: list[str] = []
+        for c in selected:
+            if c and c not in ordered:
+                ordered.append(c)
+        if not ordered:
+            ordered = ["summary", "timeseries", "distribution"]
 
         story.append(Paragraph(f"<b>Livestock Report — {farm_name}</b>", styles["Title"]))
         story.append(Paragraph(f"Generated: {datetime.now().strftime('%d/%m/%Y %H:%M')}", styles["Normal"]))
@@ -98,22 +203,6 @@ class ReportGenerator:
             story.append(t)
             story.append(Spacer(1, 12))
 
-        measure = filters.measure
-        if "Summary Statistics" in charts or "Summary" in charts:
-            stats = SummaryService.compute_stats(grouped_df, measure)
-            story.append(Paragraph("<b>Summary Statistics</b>", styles["Heading2"]))
-            for g in stats[:3]:
-                story.append(Paragraph(g["full_group"], styles["Heading3"]))
-                rows = [["Window", "Mean", "Min", "Max", "Median", "Count"]]
-                for w in g["windows"].values():
-                    rows.append(
-                        [w["label"], str(w["mean"]), str(w["min"]), str(w["max"]), str(w["median"]), str(w["count"])]
-                    )
-                tbl = Table(rows)
-                tbl.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.grey)]))
-                story.append(tbl)
-                story.append(Spacer(1, 8))
-
         unit = MEASURE_UNITS.get(measure, "")
         story.append(
             Paragraph(
@@ -121,6 +210,38 @@ class ReportGenerator:
                 styles["Normal"],
             )
         )
+        story.append(Spacer(1, 12))
+
+        img_width = 6.5 * inch
+        for kind in ordered:
+            if kind == "summary":
+                ReportGenerator._append_summary_tables(story, styles, grouped_df, measure)
+                story.append(Spacer(1, 12))
+                continue
+
+            title = {
+                "timeseries": "Time Series",
+                "distribution": "Distribution",
+                "cohorts": "Cohorts",
+            }.get(kind, kind.title())
+            story.append(Paragraph(f"<b>{title}</b>", styles["Heading2"]))
+
+            if kind == "cohorts":
+                ReportGenerator._append_cohort_tables(
+                    story, styles, filtered_df, grouped_df, filters, measure
+                )
+
+            try:
+                png = ReportGenerator.generate_chart_png(
+                    grouped_df, kind, measure, filters, filtered_df=filtered_df
+                )
+                img = Image(io.BytesIO(png), width=img_width, height=3.2 * inch, kind="proportional")
+                story.append(img)
+            except Exception as exc:
+                story.append(
+                    Paragraph(f"<i>Could not render {title} chart: {exc}</i>", styles["Normal"])
+                )
+            story.append(Spacer(1, 14))
 
         doc.build(story)
         buf.seek(0)
@@ -132,25 +253,63 @@ class ReportGenerator:
         grouped_df: pd.DataFrame,
         charts: list[str],
         farm_name: str,
+        filtered_df: pd.DataFrame | None = None,
     ) -> str:
+        filtered_df = filtered_df if filtered_df is not None else grouped_df
         summary = generate_filter_summary(filters.model_dump())
         items = "".join(f"<li><b>{k.title()}:</b> {v}</li>" for k, v in summary.items())
-        stats_html = ""
-        if grouped_df is not None and not grouped_df.empty:
-            stats = SummaryService.compute_stats(grouped_df, filters.measure)
-            for g in stats[:3]:
-                stats_html += f"<h3>{g['full_group']}</h3><table border='1' cellpadding='4'>"
-                stats_html += "<tr><th>Window</th><th>Mean</th><th>Count</th></tr>"
-                for w in g["windows"].values():
-                    stats_html += f"<tr><td>{w['label']}</td><td>{w['mean']}</td><td>{w['count']}</td></tr>"
-                stats_html += "</table>"
+        measure = filters.measure
+        selected = [_normalize_chart_name(c) for c in (charts or [])]
+        ordered: list[str] = []
+        for c in selected:
+            if c and c not in ordered:
+                ordered.append(c)
+        if not ordered:
+            ordered = ["summary", "timeseries", "distribution"]
+
+        sections = []
+        for kind in ordered:
+            if kind == "summary":
+                stats_html = "<h2>Summary Statistics</h2>"
+                if grouped_df is not None and not grouped_df.empty:
+                    stats = SummaryService.compute_stats(grouped_df, measure)
+                    for g in stats[:5]:
+                        stats_html += f"<h3>{g['full_group']}</h3><table border='1' cellpadding='4'>"
+                        stats_html += "<tr><th>Window</th><th>Mean</th><th>Min</th><th>Max</th><th>Median</th><th>Count</th></tr>"
+                        for w in g["windows"].values():
+                            stats_html += (
+                                f"<tr><td>{w['label']}</td><td>{w['mean']}</td><td>{w['min']}</td>"
+                                f"<td>{w['max']}</td><td>{w['median']}</td><td>{w['count']}</td></tr>"
+                            )
+                        stats_html += "</table>"
+                sections.append(stats_html)
+                continue
+
+            title = {
+                "timeseries": "Time Series",
+                "distribution": "Distribution",
+                "cohorts": "Cohorts",
+            }.get(kind, kind.title())
+            try:
+                png = ReportGenerator.generate_chart_png(
+                    grouped_df, kind, measure, filters, filtered_df=filtered_df
+                )
+                b64 = base64.b64encode(png).decode("ascii")
+                sections.append(
+                    f"<h2>{title}</h2><img alt='{title}' style='max-width:100%' src='data:image/png;base64,{b64}'/>"
+                )
+            except Exception as exc:
+                sections.append(f"<h2>{title}</h2><p><i>Could not render chart: {exc}</i></p>")
+
+        body = "\n".join(sections)
         return f"""<!DOCTYPE html>
 <html><head><title>{farm_name} Report</title>
 <style>body{{font-family:Poppins,sans-serif;color:#2c3e50;padding:2rem;}}
-h1{{color:#1B4332;}}</style></head>
+h1,h2{{color:#1B4332;}} table{{border-collapse:collapse;margin-bottom:1rem;}}</style></head>
 <body>
 <h1>Livestock Report — {farm_name}</h1>
 <p>Generated: {datetime.now().strftime('%d/%m/%Y %H:%M')}</p>
+<p><i>Measure: {MEASURE_LABELS.get(measure, measure)}</i></p>
 <h2>Filters</h2><ul>{items}</ul>
-{stats_html}
+{body}
 </body></html>"""

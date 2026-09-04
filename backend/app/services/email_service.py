@@ -207,9 +207,13 @@ class EmailService:
             try:
                 filters_data = sched.get("report_filters") or {}
                 filters = FilterState(**{**filters_data, "farm_id": sched["farm_id"]})
-                grouped = DataService.get_grouped_data(filters, is_admin=True)
+                filtered, grouped, _, _ = DataService.get_filtered_data(filters, is_admin=True)
                 pdf_bytes = ReportGenerator.generate_pdf(
-                    filters, grouped, sched.get("report_charts") or [], sched["farm_name"]
+                    filters,
+                    grouped,
+                    sched.get("report_charts") or [],
+                    sched["farm_name"],
+                    filtered_df=filtered,
                 )
                 subject = sched.get("email_subject") or f"Automated Livestock Report - {sched['farm_name']}"
                 body = EmailService.build_email_body(

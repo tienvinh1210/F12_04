@@ -76,10 +76,12 @@ def send_now(body: EmailSendNow, user: Annotated[CurrentUser, Depends(get_curren
     farm_name = farm["farm_name"] if farm else body.farm_id
     filters_data = body.report_filters or {"farm_id": body.farm_id, "year": date.today().year}
     filters = FilterState(**filters_data)
-    grouped = DataService.get_grouped_data(filters, user.is_admin)
+    filtered, grouped, _, _ = DataService.get_filtered_data(filters, user.is_admin)
     from app.services.report_generator import ReportGenerator
 
-    pdf = ReportGenerator.generate_pdf(filters, grouped, body.report_charts, farm_name)
+    pdf = ReportGenerator.generate_pdf(
+        filters, grouped, body.report_charts, farm_name, filtered_df=filtered
+    )
     subject = body.email_subject or f"Automated Livestock Report - {farm_name}"
     html = EmailService.build_email_body(filters_data, body.email_body, farm_name)
     ok = EmailService.send_report_email(body.recipient_email, subject, html, pdf)

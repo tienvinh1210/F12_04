@@ -19,9 +19,9 @@ def chart_png(body: ChartPngRequest, user: Annotated[CurrentUser, Depends(get_cu
     from app.services.report_generator import ReportGenerator
 
     assert_farm_access(user, body.filters.farm_id)
-    grouped = DataService.get_grouped_data(body.filters, user.is_admin)
+    filtered, grouped, _, _ = DataService.get_filtered_data(body.filters, user.is_admin)
     png = ReportGenerator.generate_chart_png(
-        grouped, body.chart_source, body.filters.measure, body.filters
+        grouped, body.chart_source, body.filters.measure, body.filters, filtered_df=filtered
     )
     return Response(content=png, media_type="image/png")
 
@@ -33,17 +33,21 @@ def generate_report(body: ReportGenerateRequest, user: Annotated[CurrentUser, De
     assert_farm_access(user, body.farm_id)
     farm = fetch_one("SELECT farm_name FROM farms WHERE farm_id = %s", (body.farm_id,))
     farm_name = farm["farm_name"] if farm else body.farm_id
-    grouped = DataService.get_grouped_data(body.filters, user.is_admin)
+    filtered, grouped, _, _ = DataService.get_filtered_data(body.filters, user.is_admin)
 
     if body.format.upper() == "HTML":
-        html = ReportGenerator.generate_html(body.filters, grouped, body.charts, farm_name)
+        html = ReportGenerator.generate_html(
+            body.filters, grouped, body.charts, farm_name, filtered_df=filtered
+        )
         return StreamingResponse(
             iter([html]),
             media_type="text/html",
             headers={"Content-Disposition": f'attachment; filename="{body.filename}.html"'},
         )
 
-    pdf = ReportGenerator.generate_pdf(body.filters, grouped, body.charts, farm_name)
+    pdf = ReportGenerator.generate_pdf(
+        body.filters, grouped, body.charts, farm_name, filtered_df=filtered
+    )
     return StreamingResponse(
         iter([pdf]),
         media_type="application/pdf",
