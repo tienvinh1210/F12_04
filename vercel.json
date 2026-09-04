@@ -17,11 +17,6 @@
   "crons": [
     { "path": "/api/email/process-due", "schedule": "*/15 * * * *" }
   ],
-  "functions": {
-    "api/index.py": {
-      "maxDuration": 30
-    }
-  },
   "headers": [
     {
       "source": "/(.*)",

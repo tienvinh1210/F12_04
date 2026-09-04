@@ -262,7 +262,9 @@ The frontend uses same-origin `/api` in production (no separate API URL needed).
 
 Heavy operations (PDF reports, large exports) may hit the timeout on Hobby. If reports fail in production, upgrade to Pro or move the API to Render/Railway (see [DEPLOYMENT.md](DEPLOYMENT.md) Option A).
 
-`vercel.json` sets `maxDuration: 30` for the API function — requires Pro on some plans.
+Hobby tier uses the default serverless timeout. Heavy PDF/report jobs may need Pro or an external API host (see [DEPLOYMENT.md](DEPLOYMENT.md) Option A).
+
+Note: do not add a `functions` block alongside `builds` in `vercel.json` — Vercel rejects that combination.
 
 ---
 
