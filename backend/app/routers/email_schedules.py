@@ -115,10 +115,18 @@ def delete_schedule(schedule_id: int, user: Annotated[CurrentUser, Depends(get_c
 @router.post("/process-due")
 def process_due(
     x_cron_secret: str = Header(None, alias="X-Cron-Secret"),
+    x_vercel_cron: str | None = Header(None, alias="x-vercel-cron"),
     cron_secret: str | None = None,
 ):
+    """Process due email schedules.
+
+    Auth (any one):
+    - X-Cron-Secret / ?cron_secret= matching CRON_SECRET
+    - x-vercel-cron: 1 (sent automatically by Vercel Cron on Hobby/Pro)
+    """
     settings = get_settings()
     secret = x_cron_secret or cron_secret
-    if secret != settings.cron_secret:
+    allowed = (secret and secret == settings.cron_secret) or (x_vercel_cron == "1")
+    if not allowed:
         raise HTTPException(status_code=401, detail="Invalid cron secret")
     return EmailService.process_due_emails()

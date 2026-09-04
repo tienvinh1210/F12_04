@@ -15,7 +15,7 @@
     { "src": "/(.*)", "dest": "/frontend/$1" }
   ],
   "crons": [
-    { "path": "/api/email/process-due", "schedule": "*/15 * * * *" }
+    { "path": "/api/email/process-due", "schedule": "0 23 * * *" }
   ],
   "headers": [
     {

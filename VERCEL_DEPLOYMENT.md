@@ -20,7 +20,7 @@ https://your-app.vercel.app
 | Frontend (HTML/CSS/JS) | Vercel static |
 | API (FastAPI) | Vercel Python serverless (`api/index.py`) |
 | Database | Supabase (external) |
-| Email cron | Vercel Cron → `/api/email/process-due` |
+| Email cron | Vercel Cron (daily on Hobby) or free external cron |
 
 ---
 
@@ -142,20 +142,30 @@ postgresql://postgres.[PROJECT_REF]:[PASSWORD]@aws-0-[region].pooler.supabase.co
 
 ---
 
-## Step 4 — Configure the email cron
+## Step 4 — Email cron (Hobby-friendly)
 
-`vercel.json` includes a cron job that runs every 15 minutes. Before deploying:
-
-1. Generate `CRON_SECRET` and add it to Vercel env vars
-2. Update the cron path in `vercel.json` to include your secret (Vercel cron cannot set custom headers):
+Vercel **Hobby** only allows **once-per-day** cron jobs. This project uses:
 
 ```json
-"path": "/api/email/process-due?cron_secret=your-actual-cron-secret-here"
+"crons": [{ "path": "/api/email/process-due", "schedule": "0 23 * * *" }]
 ```
 
-3. Commit and push (cron jobs only run on **Production** deployments)
+That runs **once daily at 23:00 UTC** (~9–10am Australia/Sydney depending on DST).
 
-> **Security note:** The cron secret appears in `vercel.json`. For tighter security, use Vercel's protected cron headers (Pro plan) or an external cron service.
+No Pro plan required. Vercel sends `x-vercel-cron: 1` automatically; the API accepts that header.
+
+### Optional: run more often for free (external cron)
+
+If you need checks every 15 minutes without upgrading Vercel:
+
+1. Sign up at [cron-job.org](https://cron-job.org) (free)
+2. Create a job:
+   - URL: `https://YOUR-APP.vercel.app/api/email/process-due?cron_secret=YOUR_CRON_SECRET`
+   - Method: `POST`
+   - Schedule: every 15 minutes
+3. Keep `CRON_SECRET` in Vercel env vars (and in the URL above)
+
+You can then remove the `crons` block from `vercel.json` entirely if you only use the external service.
 
 ---
 
@@ -291,7 +301,8 @@ Note: do not add a `functions` block alongside `builds` in `vercel.json` — Ver
 ### Cron emails not sending
 
 - Cron only runs on **production** deploys
-- Verify `CRON_SECRET` in env matches `vercel.json` cron path
+- Hobby plan: once daily at 23:00 UTC (see `vercel.json`)
+- For more frequent runs, use a free external cron (cron-job.org) with `?cron_secret=`
 - Set `EMAIL_DRY_RUN=false`
 - Check function logs for `/api/email/process-due`
 
