@@ -7,6 +7,7 @@ from datetime import datetime
 import matplotlib
 
 matplotlib.use("Agg")
+import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import pandas as pd
 from reportlab.lib import colors
@@ -35,6 +36,33 @@ def _normalize_chart_name(name: str) -> str:
     return key
 
 
+def _to_datetimes(values: list) -> list[datetime]:
+    out: list[datetime] = []
+    for v in values:
+        if isinstance(v, datetime):
+            out.append(v)
+        else:
+            out.append(pd.to_datetime(v).to_pydatetime())
+    return out
+
+
+def _format_time_axis(ax, n_points: int) -> None:
+    """Keep x-axis date labels readable (max ~6–8 ticks)."""
+    locator = mdates.AutoDateLocator(minticks=4, maxticks=8)
+    if n_points <= 14:
+        formatter = mdates.DateFormatter("%d %b")
+    elif n_points <= 90:
+        formatter = mdates.DateFormatter("%d %b")
+    else:
+        formatter = mdates.ConciseDateFormatter(locator)
+    ax.xaxis.set_major_locator(locator)
+    ax.xaxis.set_major_formatter(formatter)
+    ax.tick_params(axis="x", labelsize=8)
+    for label in ax.get_xticklabels():
+        label.set_rotation(30)
+        label.set_horizontalalignment("right")
+
+
 class ReportGenerator:
     @staticmethod
     def generate_chart_png(
@@ -47,44 +75,59 @@ class ReportGenerator:
         fig, ax = plt.subplots(figsize=(10, 5))
         kind = _normalize_chart_name(chart_source)
         filtered_df = filtered_df if filtered_df is not None else grouped_df
+        y_label = MEASURE_LABELS.get(measure, measure)
 
         if kind == "timeseries":
             result = TimeseriesService.compute(grouped_df, measure)
-            for group in set(s["group"] for s in result["series"] if "(trend)" not in s["group"]):
-                pts = [s for s in result["series"] if s["group"] == group]
-                dates = [p["date"] for p in pts]
+            n_points = 0
+            for group in sorted(
+                {s["group"] for s in result["series"] if "(trend)" not in s["group"]}
+            ):
+                pts = sorted(
+                    (s for s in result["series"] if s["group"] == group),
+                    key=lambda p: p["date"],
+                )
+                dates = _to_datetimes([p["date"] for p in pts])
                 values = [p["value"] for p in pts]
-                ax.plot(dates, values, label=group, marker="o", markersize=3)
-            ax.set_ylabel(result["y_label"])
+                n_points = max(n_points, len(dates))
+                ax.plot(dates, values, label=group, marker="o", markersize=2.5, linewidth=1.5)
+            ax.set_ylabel(y_label)
             ax.set_title("Time Series")
             ax.legend(fontsize=8)
-            plt.xticks(rotation=45, ha="right")
+            if n_points:
+                _format_time_axis(ax, n_points)
         elif kind == "distribution":
             result = DistributionService.compute(grouped_df, measure)
             for g in result["histogram"]["groups"]:
                 ax.hist(g["values"], bins=result["histogram"]["bins"], alpha=0.5, label=g["group"])
             ax.axvline(result["histogram"]["mean"], color="#B08968", linestyle="--", label="Mean")
             ax.axvline(result["histogram"]["median"], color="#7B241C", linestyle=":", label="Median")
+            ax.set_xlabel(y_label)
             ax.set_title("Distribution")
             ax.legend(fontsize=8)
         elif kind == "cohorts":
             result = CohortService.analyze(filtered_df, grouped_df, measure, 10, filters)
+            n_points = 0
             for cohort_name in ("top", "bottom"):
                 pts = [t for t in result["timeline"] if t["cohort"] == cohort_name]
                 if not pts:
                     continue
                 pts = sorted(pts, key=lambda p: p["date"])
+                dates = _to_datetimes([p["date"] for p in pts])
+                n_points = max(n_points, len(dates))
                 ax.plot(
-                    [p["date"] for p in pts],
+                    dates,
                     [p["value"] for p in pts],
                     label=f"{cohort_name.title()} {result['percentile']}%",
                     marker="o",
-                    markersize=3,
+                    markersize=2.5,
+                    linewidth=1.5,
                 )
             ax.set_title(f"Cohorts (top/bottom {result['percentile']}%)")
-            ax.set_ylabel(MEASURE_LABELS.get(measure, measure))
+            ax.set_ylabel(y_label)
             ax.legend(fontsize=8)
-            plt.xticks(rotation=45, ha="right")
+            if n_points:
+                _format_time_axis(ax, n_points)
             if not result["timeline"]:
                 ax.axis("off")
                 ax.text(0.5, 0.5, "No cohort data for current filters", ha="center", va="center")
@@ -100,7 +143,7 @@ class ReportGenerator:
             table.set_fontsize(8)
             ax.set_title("Summary Statistics")
 
-        plt.tight_layout()
+        fig.tight_layout()
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=120, bbox_inches="tight")
         plt.close(fig)
