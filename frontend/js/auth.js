@@ -60,8 +60,21 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Wake the Vercel Python function early (cold starts import pandas/numpy).
-  fetch(`${typeof API_BASE !== 'undefined' ? API_BASE : '/api'}/health`).catch(() => {});
+  // Wake slim health path immediately (no pandas). Warm auth on first focus
+  // so Sign In does not pay cold-start while the user is typing.
+  const apiBase = typeof API_BASE !== 'undefined' ? API_BASE : '/api';
+  const warmHealth = () => fetch(`${apiBase}/health`).catch(() => {});
+  const warmAuth = () => fetch(`${apiBase}/auth/me`).catch(() => {});
+  if ('requestIdleCallback' in window) {
+    requestIdleCallback(warmHealth, { timeout: 500 });
+  } else {
+    setTimeout(warmHealth, 0);
+  }
+  const pwd = document.getElementById('password');
+  const user = document.getElementById('username');
+  const warmOnce = () => { warmAuth(); };
+  pwd?.addEventListener('focus', warmOnce, { once: true });
+  user?.addEventListener('input', warmOnce, { once: true });
 
   const logoutBtn = document.getElementById('logout-btn');
   if (logoutBtn) logoutBtn.addEventListener('click', logout);
