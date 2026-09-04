@@ -9,7 +9,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=str(BACKEND_ROOT / ".env"),
+        env_file=str(BACKEND_ROOT / ".env") if (BACKEND_ROOT / ".env").exists() else None,
         env_file_encoding="utf-8",
         extra="ignore",
     )

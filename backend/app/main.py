@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -23,13 +24,14 @@ from app.routers import (
 
 settings = get_settings()
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
+IS_VERCEL = bool(os.environ.get("VERCEL") or os.environ.get("VERCEL_ENV"))
 
 app = FastAPI(title="Livestock Dashboard API", version=settings.app_version)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list or ["*"],
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?",
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?|https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -52,7 +54,10 @@ app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 app.include_router(email_schedules.router, prefix="/api/email", tags=["email"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 
-if FRONTEND_DIR.is_dir():
+# Serve HTML/CSS/JS from FastAPI only for local one-process mode.
+# On Vercel, static files come from vercel.json routes — do not mount here.
+if not IS_VERCEL and FRONTEND_DIR.is_dir():
+
     @app.get("/")
     def root():
         return RedirectResponse(url="/login.html")

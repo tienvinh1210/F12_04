@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 from typing import Any, Generator
 
 import psycopg2
@@ -10,18 +11,37 @@ from psycopg2.pool import SimpleConnectionPool
 from app.config import get_settings
 
 _pool: SimpleConnectionPool | None = None
+IS_SERVERLESS = bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
+
+
+def _connect():
+    settings = get_settings()
+    return psycopg2.connect(settings.database_url, connect_timeout=10)
 
 
 def get_pool() -> SimpleConnectionPool:
     global _pool
     if _pool is None:
         settings = get_settings()
-        _pool = SimpleConnectionPool(1, 10, settings.database_url)
+        _pool = SimpleConnectionPool(1, 5, settings.database_url)
     return _pool
 
 
 @contextlib.contextmanager
 def get_conn() -> Generator[Any, None, None]:
+    # Fresh connection per request on Vercel — connection pools break across invocations
+    if IS_SERVERLESS:
+        conn = _connect()
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+        return
+
     pool = get_pool()
     conn = pool.getconn()
     try:

@@ -24,6 +24,16 @@ https://your-app.vercel.app
 
 ---
 
+## Troubleshooting login on Vercel
+
+1. Open `https://YOUR-APP.vercel.app/api/health` — must return `{"status":"ok"}`
+2. Confirm Vercel env vars include `DATABASE_URL` (pooler **6543**, `@` → `%40`) and `JWT_SECRET`
+3. Set `CORS_ORIGINS=https://YOUR-APP.vercel.app` and **redeploy**
+4. Check **Deployments → Functions** logs for `/api/auth/login` errors
+5. Hard-refresh login (`Cmd+Shift+R`) so the browser uses `/api` (same origin)
+
+---
+
 ## Prerequisites
 
 Complete these **before** deploying to Vercel:
@@ -44,7 +54,9 @@ git init
 git add .
 git commit -m "Livestock Dashboard initial deploy"
 git branch -M main
-git remote add origin https://github.com/YOUR_USER/livestock-dashboard.git
+git remote add origin https://github.com/tienvinh1210/F12_04.git
+# or if origin exists:
+# git remote set-url origin https://github.com/tienvinh1210/F12_04.git
 git push -u origin main
 ```
 

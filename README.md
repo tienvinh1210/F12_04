@@ -1,6 +1,6 @@
 # Livestock Dashboard
 
-Python FastAPI backend + HTML/CSS/JS frontend for livestock feedlot performance analytics. Multi-tenant on Supabase PostgreSQL, deployable to Vercel.
+Python FastAPI backend + HTML/CSS/JS frontend for livestock feedlot performance analytics. Multi-tenant on Supabase PostgreSQL, deployable to **Vercel**.
 
 ## Features
 
@@ -9,39 +9,43 @@ Python FastAPI backend + HTML/CSS/JS frontend for livestock feedlot performance 
 - **JWT auth** with scrypt passwords (admin / owner / user roles)
 - **Email scheduling** (daily/weekly/monthly/once) with cron worker
 - **Admin CSV upload** with snapshot backup and skip/overwrite duplicates
-- **Farm KF (Killara Feedlot)** seeded with ~12,000 sample records
+- **Farm KF (Killara Feedlot)** seeded with real `Data.csv` (~12,117 records)
 
 ## Quick Start (Local)
 
-### 1. Start PostgreSQL
+### 1. Configure environment
 
 ```bash
-docker compose up -d
+cp backend/.env.example backend/.env
+# Set DATABASE_URL to your Supabase pooler URL (port 6543; encode @ in password as %40)
 ```
 
-### 2. Configure environment
+### 2. Install & seed
 
 ```bash
-cp .env.example backend/.env
-# Edit DATABASE_URL if needed (default: postgresql://postgres:postgres@localhost:5432/livestock)
-```
-
-### 3. Install dependencies & seed
-
-```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r backend/requirements.txt
-python scripts/seed.py
+python scripts/seed.py --force
 ```
 
-### 4. Run API
+### 3. Run (HTML frontend + API)
+
+**One process (recommended):**
 
 ```bash
 cd backend && uvicorn app.main:app --reload --port 8000
 ```
 
-### 5. Serve frontend
+Open http://localhost:8000/login.html
+
+**Or two processes:**
 
 ```bash
+# Terminal 1
+cd backend && uvicorn app.main:app --reload --port 8000
+
+# Terminal 2
 cd frontend && python -m http.server 3000
 ```
 
@@ -55,51 +59,45 @@ Open http://localhost:3000/login.html
 | owner | owner123 | Admin |
 | user | user123 | Viewer (EIDs anonymized) |
 
-## Deploy to Streamlit (recommended if Vercel login fails)
-
-See **[STREAMLIT_DEPLOYMENT.md](STREAMLIT_DEPLOYMENT.md)**.
-
-```bash
-pip install -r requirements-streamlit.txt
-cp .streamlit/secrets.toml.example .streamlit/secrets.toml   # add DATABASE_URL
-streamlit run streamlit_app.py
-```
-
-Then deploy the same repo on [share.streamlit.io](https://share.streamlit.io) with Main file `streamlit_app.py`.
-
 ## Deploy to Vercel
 
-See **[VERCEL_DEPLOYMENT.md](VERCEL_DEPLOYMENT.md)** for full step-by-step hosting instructions.
+Repo: https://github.com/tienvinh1210/F12_04  
+
+Full guide: **[VERCEL_DEPLOYMENT.md](VERCEL_DEPLOYMENT.md)**
 
 Quick summary:
 1. Complete [Supabase setup](SUPABASE_SETUP.md) and seed data
-2. Push repo to GitHub
-3. Import project on [vercel.com](https://vercel.com) (root directory = `.`)
-4. Add environment variables from `backend/.env.example`
-5. Update `CORS_ORIGINS` and cron secret in `vercel.json`
-6. Deploy → open `https://your-app.vercel.app/login.html`
+2. Push this repo to GitHub
+3. Import on [vercel.com](https://vercel.com) — **Root Directory = `.`**
+4. Add env vars (`DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGINS`, etc.)
+5. Deploy → open `https://your-app.vercel.app/login.html`
 
-Vercel cron runs `/api/email/process-due` every 15 minutes. Set `CRON_SECRET` and configure the cron header in Vercel dashboard.
+After first deploy, set:
+
+```
+CORS_ORIGINS=https://your-app.vercel.app
+```
+
+then redeploy.
 
 ## API Health Check
 
 ```bash
-curl http://localhost:8000/api/health
+curl https://your-app.vercel.app/api/health
 # {"status":"ok","version":"1.0.0"}
 ```
 
 ## Project Structure
 
-See [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) for the correct folder layout and common mistakes.
-
 ```
 backend/app/          FastAPI application
-frontend/             Static HTML/CSS/JS dashboard
-api/                  Vercel serverless entry
+frontend/             HTML/CSS/JS dashboard (primary UI)
+api/                  Vercel serverless entry (Mangum)
 database/             PostgreSQL schema
-scripts/seed.py       Seed users + KF sample data
-admin-cli/admin.py    CLI for CSV upload
+scripts/seed.py       Seed users + KF data from Data.csv
 ```
+
+See [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) for layout details.
 
 ## Tests
 
@@ -109,9 +107,7 @@ pytest backend/tests/ -v
 
 ## Runbook
 
-- **Change passwords**: `PUT /api/auth/password` or re-run seed with updated hashes
-- **Upload CSV**: `POST /api/admin/farms/KF/upload` (filename: `KF_YYYY-MM-DD.csv`)
-- **Email dry run**: Set `EMAIL_DRY_RUN=true` to skip Resend API calls
-- **Rollback data**: Use `animal_data_snapshots` via admin API
-
-See `TESTING.md`, `DEPLOYMENT.md`, and `00_BLUEPRINT_MASTER.md` for full specifications.
+- **Change passwords**: `PUT /api/auth/password` or re-run seed
+- **Upload CSV**: `POST /api/admin/farms/KF/upload`
+- **Email dry run**: `EMAIL_DRY_RUN=true`
+- See `TESTING.md`, `DEPLOYMENT.md`, `00_BLUEPRINT_MASTER.md`
