@@ -18,12 +18,24 @@ router = APIRouter()
 
 def _query_response(body: DataQueryRequest, user: CurrentUser) -> dict:
     assert_farm_access(user, body.farm_id)
-    # Count-only path: skip expensive group expansion used for charts.
-    need_groups = bool(body.include_rows)
+
+    if not body.include_rows:
+        from app.services import sql_agg
+
+        counts = sql_agg.count_filtered(body, user.is_admin)
+        return {
+            "record_count": counts["record_count"],
+            "total_records": counts["total_records"],
+            "common_filters_note": None,
+            "filtered": [],
+            "processed": [],
+            "grouped": [],
+        }
+
     filtered, grouped, _, total_records = DataService.get_filtered_data(
-        body, user.is_admin, build_groups=need_groups
+        body, user.is_admin, build_groups=True
     )
-    note = DataService.get_common_note(body, grouped) if need_groups else None
+    note = DataService.get_common_note(body, grouped)
     record_count = len(filtered)
 
     result = {
@@ -32,24 +44,18 @@ def _query_response(body: DataQueryRequest, user: CurrentUser) -> dict:
         "common_filters_note": note,
     }
 
-    if body.include_rows:
-        processed = grouped.copy() if not grouped.empty else filtered.copy()
-        filtered_records = FilterService.df_to_records(filtered)
-        processed_records = FilterService.df_to_records(processed)
+    processed = grouped.copy() if not grouped.empty else filtered.copy()
+    filtered_records = FilterService.df_to_records(filtered)
+    processed_records = FilterService.df_to_records(processed)
 
-        if body.page and body.page_size:
-            start = (body.page - 1) * body.page_size
-            end = start + body.page_size
-            filtered_records = filtered_records[start:end]
+    if body.page and body.page_size:
+        start = (body.page - 1) * body.page_size
+        end = start + body.page_size
+        filtered_records = filtered_records[start:end]
 
-        result["filtered"] = anonymize_records(filtered_records, user.is_admin)
-        result["processed"] = anonymize_records(processed_records, user.is_admin)
-        result["grouped"] = anonymize_records(processed_records, user.is_admin)
-    else:
-        result["filtered"] = []
-        result["processed"] = []
-        result["grouped"] = []
-
+    result["filtered"] = anonymize_records(filtered_records, user.is_admin)
+    result["processed"] = anonymize_records(processed_records, user.is_admin)
+    result["grouped"] = anonymize_records(processed_records, user.is_admin)
     return result
 
 

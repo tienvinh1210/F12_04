@@ -1,9 +1,8 @@
 let histBins = 20;
 
 async function renderDistributions(container) {
-  const result = getQueryResult();
-  if (!result || result.record_count === 0) {
-    showEmptyState(container, getFilters());
+  if (!getFilters().year) {
+    container.innerHTML = '<div class="alert alert-muted">Loading filters…</div>';
     return;
   }
   showLoading(container);
@@ -12,6 +11,13 @@ async function renderDistributions(container) {
       method: 'POST',
       body: JSON.stringify({ ...getFilters(), hist_bins: histBins }),
     });
+    if (typeof updateRecordCountBadge === 'function' && data.record_count != null) {
+      updateRecordCountBadge(data.record_count);
+    }
+    if (!data.boxplot?.groups?.length) {
+      showEmptyState(container, getFilters());
+      return;
+    }
     let html = `
       <div class="alert alert-info">Tip: Click on legend items to toggle their visibility on the graphs below.</div>
       <div class="controls-bar">

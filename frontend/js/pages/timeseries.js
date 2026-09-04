@@ -2,9 +2,8 @@ let tsPointSize = 3;
 let tsShowTrend = false;
 
 async function renderTimeseries(container) {
-  const result = getQueryResult();
-  if (!result || result.record_count === 0) {
-    showEmptyState(container, getFilters());
+  if (!getFilters().year) {
+    container.innerHTML = '<div class="alert alert-muted">Loading filters…</div>';
     return;
   }
   showLoading(container);
@@ -14,12 +13,16 @@ async function renderTimeseries(container) {
       method: 'POST',
       body: JSON.stringify({ ...filters, point_size: tsPointSize, show_smooth: tsShowTrend }),
     });
+    if (typeof updateRecordCountBadge === 'function' && data.record_count != null) {
+      updateRecordCountBadge(data.record_count);
+    }
+    if (!data.series || data.series.length === 0) {
+      showEmptyState(container, filters);
+      return;
+    }
     let html = `
       <div class="alert alert-info">Tip: Click on legend items to toggle their visibility on the time series plot below.</div>`;
-    if (result.common_filters_note) {
-      html += `<div class="alert alert-muted">${result.common_filters_note}</div>`;
-    }
-    if (data.common_filters_note && data.common_filters_note !== result.common_filters_note) {
+    if (data.common_filters_note) {
       html += `<div class="alert alert-muted">${data.common_filters_note}</div>`;
     }
     const cov = data.combo_coverage;
@@ -90,7 +93,6 @@ function drawTimeseries(data) {
     };
   });
 
-  // Pad Y range slightly so gradual series (e.g. Brahman X ~25 kg span) remain readable
   const allY = data.series.filter(s => !String(s.group).includes('(trend)')).map(s => s.value);
   let yRange;
   if (allY.length) {

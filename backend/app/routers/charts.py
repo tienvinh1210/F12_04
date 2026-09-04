@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.auth.dependencies import CurrentUser, assert_farm_access, get_current_user
 from app.models.schemas import DistributionRequest, TimeseriesRequest
-from app.services.chart_service import DistributionService, TimeseriesService
-from app.services.data_service import DataService
+from app.services import sql_agg
 
 router = APIRouter()
 
@@ -15,32 +14,30 @@ router = APIRouter()
 @router.post("/timeseries")
 def timeseries(body: TimeseriesRequest, user: Annotated[CurrentUser, Depends(get_current_user)]):
     assert_farm_access(user, body.farm_id)
-    filtered, grouped, _, _ = DataService.get_filtered_data(body, user.is_admin)
-    result = TimeseriesService.compute(grouped, body.measure, body.show_smooth)
-    from app.services.filter_service import FilterService
-
-    coverage = FilterService.combo_coverage(filtered, body, user.is_admin)
-    result["combo_coverage"] = coverage
-    result["common_filters_note"] = DataService.get_common_note(body, grouped)
-    return result
+    try:
+        return sql_agg.timeseries_sql(body, user.is_admin, body.measure, body.show_smooth)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/distribution")
 def distribution(body: DistributionRequest, user: Annotated[CurrentUser, Depends(get_current_user)]):
     assert_farm_access(user, body.farm_id)
-    _, grouped, _, _ = DataService.get_filtered_data(body, user.is_admin)
-    return DistributionService.compute(grouped, body.measure, body.hist_bins)
+    try:
+        return sql_agg.distribution_sql(body, user.is_admin, body.measure, body.hist_bins)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/custom")
 def custom_chart(body: dict, user: Annotated[CurrentUser, Depends(get_current_user)]):
     from app.models.schemas import CustomChartRequest
+    from app.services.data_service import DataService
 
     req = CustomChartRequest(**body)
     assert_farm_access(user, req.farm_id)
     filtered, grouped, _, _ = DataService.get_filtered_data(req, user.is_admin)
     df = grouped if not grouped.empty else filtered
-    import pandas as pd
 
     chart_type = req.chart_type
     x_col = req.x_col

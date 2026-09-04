@@ -1,12 +1,18 @@
 async function renderSummary(container) {
-  const result = getQueryResult();
-  if (!result || result.record_count === 0) {
-    showEmptyState(container, getFilters());
+  if (!getFilters().year) {
+    container.innerHTML = '<div class="alert alert-muted">Loading filters…</div>';
     return;
   }
   showLoading(container);
   try {
     const data = await apiFetch('/summary/stats', { method: 'POST', body: JSON.stringify(getFilters()) });
+    if (typeof updateRecordCountBadge === 'function' && data.record_count != null) {
+      updateRecordCountBadge(data.record_count);
+    }
+    if (!data.groups || data.groups.length === 0 || data.record_count === 0) {
+      showEmptyState(container, getFilters());
+      return;
+    }
     const measure = getFilters().measure;
     let html = `<div class="alert alert-info">The summary statistics below show separate statistics for each animal group based on your current filter selections.</div>`;
     for (const group of data.groups) {

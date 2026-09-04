@@ -34,6 +34,13 @@ function getFilterPayload() {
   };
 }
 
+function updateRecordCountBadge(recordCount, totalRecords) {
+  const countEl = document.getElementById('record-count');
+  if (!countEl || recordCount == null) return;
+  const total = totalRecords ?? choices?.total_records ?? recordCount;
+  countEl.textContent = `Showing ${Number(recordCount).toLocaleString()} of ${Number(total).toLocaleString()} records`;
+}
+
 async function loadChoices() {
   const farmId = getFarmId();
   choices = await apiFetch(`/filters/choices?farm_id=${farmId}`);
@@ -122,23 +129,21 @@ function clearAllFilters() {
   showToast('Filters cleared', 'success');
 }
 
-async function runQuery() {
+async function runQuery(options = {}) {
+  const { render = true } = options;
   try {
+    if (render && onFilterChange) onFilterChange(null);
     queryResult = await apiFetch('/data/query', {
       method: 'POST',
       body: JSON.stringify({ ...getFilterPayload(), include_rows: false }),
     });
-    const countEl = document.getElementById('record-count');
-    if (countEl) {
-      countEl.textContent = `Showing ${queryResult.record_count.toLocaleString()} of ${queryResult.total_records.toLocaleString()} records`;
-    }
-    if (onFilterChange) onFilterChange(queryResult);
+    updateRecordCountBadge(queryResult.record_count, queryResult.total_records);
   } catch (err) {
     showToast(err.message, 'error');
   }
 }
 
-const debouncedQuery = debounce(runQuery, 300);
+const debouncedQuery = debounce(() => runQuery({ render: true }), 300);
 
 function getQueryResult() { return queryResult; }
 function getFilters() { return getFilterPayload(); }
@@ -150,9 +155,12 @@ function setFilterState(state) {
   debouncedQuery();
 }
 
-function initFilters(callback) {
+async function initFilters(callback) {
   onFilterChange = callback;
-  loadChoices().then(runQuery);
+  await loadChoices();
+  // Charts start immediately; count badge updates in parallel (no second chart fetch).
+  if (onFilterChange) onFilterChange(null);
+  runQuery({ render: false });
   document.getElementById('clear-filters')?.addEventListener('click', clearAllFilters);
   document.querySelectorAll('[data-select-all]').forEach(el => {
     el.addEventListener('click', (e) => { e.preventDefault(); selectAll(el.dataset.selectAll); });
@@ -169,3 +177,4 @@ window.setFilterState = setFilterState;
 window.getQueryResult = getQueryResult;
 window.clearAllFilters = clearAllFilters;
 window.runQuery = runQuery;
+window.updateRecordCountBadge = updateRecordCountBadge;
