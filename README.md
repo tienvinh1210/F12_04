@@ -55,6 +55,18 @@ Open http://localhost:3000/login.html
 | owner | owner123 | Admin |
 | user | user123 | Viewer (EIDs anonymized) |
 
+## Deploy to Streamlit (recommended if Vercel login fails)
+
+See **[STREAMLIT_DEPLOYMENT.md](STREAMLIT_DEPLOYMENT.md)**.
+
+```bash
+pip install -r requirements-streamlit.txt
+cp .streamlit/secrets.toml.example .streamlit/secrets.toml   # add DATABASE_URL
+streamlit run streamlit_app.py
+```
+
+Then deploy the same repo on [share.streamlit.io](https://share.streamlit.io) with Main file `streamlit_app.py`.
+
 ## Deploy to Vercel
 
 See **[VERCEL_DEPLOYMENT.md](VERCEL_DEPLOYMENT.md)** for full step-by-step hosting instructions.
