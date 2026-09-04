@@ -165,6 +165,7 @@
 
 .toast.error { background: var(--danger); }
 .toast.success { background: var(--primary-light); }
+.toast.warning { background: #b45309; }
 
 @keyframes slideIn {
   from { transform: translateX(100%); opacity: 0; }
