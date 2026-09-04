@@ -91,15 +91,108 @@ class FilterService:
 
     @staticmethod
     def _expand_dimension(selected: list[str], unique_values: list[str]) -> list[str]:
+        selected = selected or ["Overall"]
         has_all = "Overall" in selected
-        has_specific = len(selected) > 1 and any(v != "Overall" for v in selected)
-        if has_all and not has_specific:
+        specifics = [v for v in selected if v != "Overall"]
+        if has_all and not specifics:
             return ["Overall"]
-        if has_all and has_specific:
-            return ["Overall"] + [v for v in selected if v != "Overall"]
-        if not has_all and has_specific:
-            return selected
+        if has_all and specifics:
+            return ["Overall"] + specifics
+        if specifics:
+            # One or more specific values selected (no Overall)
+            return specifics
         return unique_values if unique_values else ["Overall"]
+
+    @staticmethod
+    def expand_filter_dimensions(
+        base_df: pd.DataFrame, filters: FilterState, is_admin: bool
+    ) -> dict[str, list[str]]:
+        def unique_treatments(df: pd.DataFrame) -> list[str]:
+            return sorted({treatment_display(t) for t in df["treatment"].unique()}) or ["No Treatment"]
+
+        return {
+            "sex": FilterService._expand_dimension(
+                filters.sex, sorted(base_df["sex"].dropna().unique().tolist())
+            ),
+            "treatment": FilterService._expand_dimension(
+                filters.treatment, unique_treatments(base_df)
+            ),
+            "breed": FilterService._expand_dimension(
+                filters.breed, sorted(base_df["breed"].dropna().unique().tolist())
+            ),
+            "mob": FilterService._expand_dimension(
+                filters.mob, sorted(base_df["mob"].dropna().unique().tolist())
+            ),
+            "eid": (
+                FilterService._expand_dimension(
+                    filters.eid, sorted(base_df["eid"].dropna().unique().tolist())
+                )
+                if is_admin
+                else ["Overall"]
+            ),
+        }
+
+    @staticmethod
+    def combo_coverage(
+        base_df: pd.DataFrame, filters: FilterState, is_admin: bool
+    ) -> dict:
+        """Report how many filter combinations exist vs are empty in the data."""
+        if base_df.empty:
+            return {
+                "expected": 0,
+                "present": 0,
+                "missing": 0,
+                "present_groups": [],
+                "missing_groups": [],
+            }
+
+        dims = FilterService.expand_filter_dimensions(base_df, filters, is_admin)
+        varying_dims = [d for d, vals in dims.items() if len(vals) > 1]
+        all_overall = all(vals == ["Overall"] for vals in dims.values())
+        combos = list(
+            itertools.product(
+                dims["sex"], dims["treatment"], dims["breed"], dims["mob"], dims["eid"]
+            )
+        )
+
+        present_groups: list[str] = []
+        missing_groups: list[str] = []
+        for sex_v, treat_v, breed_v, mob_v, eid_v in combos:
+            subset = base_df
+            if sex_v != "Overall":
+                subset = subset[subset["sex"] == sex_v]
+            if treat_v != "Overall":
+                if treat_v == "No Treatment":
+                    subset = subset[subset["treatment"].isna()]
+                else:
+                    subset = subset[subset["treatment"] == treat_v]
+            if breed_v != "Overall":
+                subset = subset[subset["breed"] == breed_v]
+            if mob_v != "Overall":
+                subset = subset[subset["mob"] == mob_v]
+            if eid_v != "Overall":
+                subset = subset[subset["eid"] == eid_v]
+
+            combo = {
+                "sex": sex_v,
+                "treatment": treat_v,
+                "breed": breed_v,
+                "mob": mob_v,
+                "eid": eid_v if is_admin else "Overall",
+            }
+            label = FilterService.label_from_combo(combo, varying_dims, all_overall)
+            if subset.empty:
+                missing_groups.append(label)
+            else:
+                present_groups.append(label)
+
+        return {
+            "expected": len(combos),
+            "present": len(present_groups),
+            "missing": len(missing_groups),
+            "present_groups": present_groups,
+            "missing_groups": missing_groups,
+        }
 
     @staticmethod
     def build_grouped_data(
@@ -108,33 +201,26 @@ class FilterService:
         if base_df.empty:
             return base_df.copy()
 
-        def unique_treatments(df: pd.DataFrame) -> list[str]:
-            vals = []
-            for t in df["treatment"].unique():
-                vals.append(treatment_display(t))
-            return sorted(set(vals)) if vals else ["No Treatment"]
-
-        sex_vals = FilterService._expand_dimension(
-            filters.sex, sorted(base_df["sex"].dropna().unique().tolist())
-        )
-        treatment_vals = FilterService._expand_dimension(
-            filters.treatment, unique_treatments(base_df)
-        )
-        breed_vals = FilterService._expand_dimension(
-            filters.breed, sorted(base_df["breed"].dropna().unique().tolist())
-        )
-        mob_vals = FilterService._expand_dimension(
-            filters.mob, sorted(base_df["mob"].dropna().unique().tolist())
-        )
-
-        if is_admin:
-            eid_vals = FilterService._expand_dimension(
-                filters.eid, sorted(base_df["eid"].dropna().unique().tolist())
-            )
-        else:
-            eid_vals = ["Overall"]
+        dims = FilterService.expand_filter_dimensions(base_df, filters, is_admin)
+        sex_vals = dims["sex"]
+        treatment_vals = dims["treatment"]
+        breed_vals = dims["breed"]
+        mob_vals = dims["mob"]
+        eid_vals = dims["eid"]
 
         combos = list(itertools.product(sex_vals, treatment_vals, breed_vals, mob_vals, eid_vals))
+        # Dimensions that differ across filter combinations — labels must use these,
+        # not within-subset uniqueness (a single-breed subset has constant breed).
+        combo_dims = {
+            "sex": sex_vals,
+            "treatment": treatment_vals,
+            "breed": breed_vals,
+            "mob": mob_vals,
+            "eid": eid_vals,
+        }
+        varying_dims = [d for d, vals in combo_dims.items() if len(vals) > 1]
+        all_overall = all(vals == ["Overall"] for vals in combo_dims.values())
+
         parts: list[pd.DataFrame] = []
 
         for sex_v, treat_v, breed_v, mob_v, eid_v in combos:
@@ -156,13 +242,43 @@ class FilterService:
                 continue
             subset = subset.copy()
             subset["treatment_display"] = subset["treatment"].apply(treatment_display)
-            subset["group"] = FilterService.create_simplified_group_labels(subset, filters, is_admin)
-            subset["full_group"] = FilterService.create_full_group_labels(subset, is_admin)
+            combo = {
+                "sex": sex_v,
+                "treatment": treat_v,
+                "breed": breed_v,
+                "mob": mob_v,
+                "eid": eid_v if is_admin else "Overall",
+            }
+            subset["group"] = FilterService.label_from_combo(combo, varying_dims, all_overall)
+            subset["full_group"] = FilterService.full_label_from_combo(combo, is_admin)
             parts.append(subset)
 
         if not parts:
             return pd.DataFrame()
         return pd.concat(parts, ignore_index=True)
+
+    @staticmethod
+    def label_from_combo(combo: dict, varying_dims: list[str], all_overall: bool) -> str:
+        if all_overall or not varying_dims:
+            if all(v == "Overall" for v in combo.values()):
+                return "Overall Average"
+            # Single combo with some specific filter — show non-Overall dims
+            parts = [
+                f"{friendly_label(d)}: {combo[d]}"
+                for d in ("sex", "treatment", "breed", "mob", "eid")
+                if combo.get(d) and combo[d] != "Overall"
+            ]
+            return " | ".join(parts) if parts else "Overall Average"
+        return " | ".join(f"{friendly_label(d)}: {combo[d]}" for d in varying_dims)
+
+    @staticmethod
+    def full_label_from_combo(combo: dict, is_admin: bool) -> str:
+        parts = []
+        for col in ("sex", "treatment", "breed", "mob"):
+            parts.append(f"{friendly_label(col)}: {combo.get(col, 'Overall')}")
+        eid = combo.get("eid", "Overall") if is_admin else "*****"
+        parts.append(f"EID: {eid}")
+        return ", ".join(parts)
 
     @staticmethod
     def create_simplified_group_labels(

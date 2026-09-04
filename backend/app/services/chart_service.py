@@ -80,18 +80,20 @@ class TimeseriesService:
             return {"series": [], "y_label": f"{measure} ({MEASURE_UNITS.get(measure, '')})"}
 
         daily = (
-            grouped_df.groupby(["date", "group"])[measure]
+            grouped_df.groupby(["date", "group"], sort=True)[measure]
             .agg(value="mean", count="count")
             .reset_index()
         )
+        daily = daily.sort_values(["group", "date"])
+        daily["value"] = daily["value"].round(2)
         daily["date"] = daily["date"].dt.strftime("%Y-%m-%d")
         series = daily.to_dict(orient="records")
 
-        if show_smooth and len(series) > 3:
+        if show_smooth and len(daily) > 3:
             for group in daily["group"].unique():
                 gdf = daily[daily["group"] == group].sort_values("date")
                 if len(gdf) >= 3:
-                    window = max(3, len(gdf) // 5)
+                    window = max(3, min(15, len(gdf) // 5 or 3))
                     smoothed = gdf["value"].rolling(window=window, center=True, min_periods=1).mean()
                     for (_, row), sm in zip(gdf.iterrows(), smoothed):
                         series.append(

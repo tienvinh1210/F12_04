@@ -15,8 +15,14 @@ router = APIRouter()
 @router.post("/timeseries")
 def timeseries(body: TimeseriesRequest, user: Annotated[CurrentUser, Depends(get_current_user)]):
     assert_farm_access(user, body.farm_id)
-    _, grouped, _, _ = DataService.get_filtered_data(body, user.is_admin)
-    return TimeseriesService.compute(grouped, body.measure, body.show_smooth)
+    filtered, grouped, _, _ = DataService.get_filtered_data(body, user.is_admin)
+    result = TimeseriesService.compute(grouped, body.measure, body.show_smooth)
+    from app.services.filter_service import FilterService
+
+    coverage = FilterService.combo_coverage(filtered, body, user.is_admin)
+    result["combo_coverage"] = coverage
+    result["common_filters_note"] = DataService.get_common_note(body, grouped)
+    return result
 
 
 @router.post("/distribution")
