@@ -6,6 +6,7 @@ let tsShellReady = false;
 let tsLastData = null;
 let tsGrainCache = null; // { key, grain, y_label, record_count }
 let tsPrefetchPromise = null;
+let tsGrainInflight = null; // { key, promise }
 
 function tsScopeKey(filters) {
   return [filters.farm_id, filters.year, filters.month || 'All', String(filters.day || 'All'), filters.measure].join('|');
@@ -265,29 +266,42 @@ async function ensureTimeseriesGrain(filters, signal) {
     return null;
   }
 
-  const payload = await apiFetch('/charts/timeseries-grain', {
-    method: 'POST',
-    body: JSON.stringify({
-      farm_id: filters.farm_id,
-      year: filters.year,
-      month: filters.month,
-      day: filters.day,
-      measure: filters.measure,
-      sex: ['Overall'],
-      treatment: ['Overall'],
-      breed: ['Overall'],
-      mob: ['Overall'],
-      eid: ['Overall'],
-    }),
-    signal,
-  });
-  tsGrainCache = {
-    key,
-    grain: payload.grain || [],
-    y_label: payload.y_label,
-    record_count: payload.record_count,
-  };
-  return tsGrainCache;
+  if (tsGrainInflight && tsGrainInflight.key === key) {
+    return tsGrainInflight.promise;
+  }
+
+  const promise = (async () => {
+    const payload = await apiFetch('/charts/timeseries-grain', {
+      method: 'POST',
+      body: JSON.stringify({
+        farm_id: filters.farm_id,
+        year: filters.year,
+        month: filters.month,
+        day: filters.day,
+        measure: filters.measure,
+        sex: ['Overall'],
+        treatment: ['Overall'],
+        breed: ['Overall'],
+        mob: ['Overall'],
+        eid: ['Overall'],
+      }),
+      signal,
+    });
+    tsGrainCache = {
+      key,
+      grain: payload.grain || [],
+      y_label: payload.y_label,
+      record_count: payload.record_count,
+    };
+    return tsGrainCache;
+  })();
+
+  tsGrainInflight = { key, promise };
+  try {
+    return await promise;
+  } finally {
+    if (tsGrainInflight && tsGrainInflight.promise === promise) tsGrainInflight = null;
+  }
 }
 
 async function prefetchTimeseriesGrain() {
@@ -445,3 +459,10 @@ function resetTimeseriesShell() {
 window.renderTimeseries = renderTimeseries;
 window.resetTimeseriesShell = resetTimeseriesShell;
 window.prefetchTimeseriesGrain = prefetchTimeseriesGrain;
+window.ensureScopeGrain = ensureTimeseriesGrain;
+window.getScopeGrainCache = () => tsGrainCache;
+window.tsScopeKey = tsScopeKey;
+window.expandFilterDim = expandDim;
+window.grainRowMatchesCombo = rowMatchesCombo;
+window.grainFriendlyLabel = friendlyLabel;
+window.grainLabelFromCombo = labelFromCombo;

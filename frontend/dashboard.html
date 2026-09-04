@@ -104,8 +104,11 @@
       const container = document.getElementById('page-content');
       const renderer = PAGE_RENDERERS[currentPage];
       if (!renderer) return;
-      if (currentPage === 'timeseries') renderer(container, options);
-      else renderer(container);
+      if (currentPage === 'timeseries' || currentPage === 'summary') {
+        renderer(container, options);
+      } else {
+        renderer(container);
+      }
     }
 
     function switchPage(page) {
