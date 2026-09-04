@@ -21,7 +21,7 @@ Host the Livestock Dashboard on **[Streamlit Community Cloud](https://share.stre
 ## Prerequisites
 
 1. Supabase project ready (schema + seeded `Data.csv`) — see [SUPABASE_SETUP.md](SUPABASE_SETUP.md)
-2. Code pushed to GitHub (e.g. `tdan0407/F12_04_Python`)
+2. Code pushed to GitHub — https://github.com/tienvinh1210/F12_04
 3. Free account at [share.streamlit.io](https://share.streamlit.io) (sign in with GitHub)
 
 ---
@@ -53,7 +53,7 @@ Open **http://localhost:8501** and log in with `admin` / `admin123`.
 
 | Field | Value |
 |-------|--------|
-| **Repository** | `your-user/F12_04_Python` (or your repo name) |
+| **Repository** | `tienvinh1210/F12_04` |
 | **Branch** | `main` |
 | **Main file path** | `streamlit_app.py` |
 | **App URL** (optional) | e.g. `livestock-dashboard` |
