@@ -308,7 +308,7 @@ Note: do not add a `functions` block alongside `builds` in `vercel.json` — Ver
 
 ### Build fails — Python dependencies
 
-- Ensure `api/requirements.txt` exists and points to `backend/requirements.txt`
+- Ensure `api/requirements.txt` lists packages directly (Vercel cannot parse `-r ../backend/...`)
 - Matplotlib/reportlab can make builds slow — this is normal
 
 ### Static files 404
