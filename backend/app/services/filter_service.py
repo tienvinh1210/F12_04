@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-import calendar
 import itertools
+import time
 from typing import Any
 
 import pandas as pd
 
 from app.constants import MEASURE_LABELS, MEASURE_UNITS, MONTH_NAMES
 from app.models.schemas import FilterState
+
+# Warm serverless instances keep this across requests — avoids re-pulling ~12k rows
+# from Supabase on every chart/summary call.
+_FARM_DF_CACHE: dict[str, tuple[float, pd.DataFrame]] = {}
+_FARM_DF_TTL_SEC = 180
 
 
 def friendly_label(col: str) -> str:
@@ -30,8 +35,14 @@ def treatment_display(val: Any) -> str:
 
 class FilterService:
     @staticmethod
-    def load_farm_dataframe(farm_id: str) -> pd.DataFrame:
+    def load_farm_dataframe(farm_id: str, *, use_cache: bool = True) -> pd.DataFrame:
         from app.db import fetch_all
+
+        now = time.monotonic()
+        if use_cache and farm_id in _FARM_DF_CACHE:
+            cached_at, cached_df = _FARM_DF_CACHE[farm_id]
+            if now - cached_at < _FARM_DF_TTL_SEC:
+                return cached_df
 
         rows = fetch_all(
             """
@@ -44,9 +55,12 @@ class FilterService:
             (farm_id,),
         )
         if not rows:
-            return pd.DataFrame()
-        df = pd.DataFrame(rows)
-        df["date"] = pd.to_datetime(df["date"])
+            df = pd.DataFrame()
+        else:
+            df = pd.DataFrame(rows)
+            df["date"] = pd.to_datetime(df["date"])
+        if use_cache:
+            _FARM_DF_CACHE[farm_id] = (now, df)
         return df
 
     @staticmethod
@@ -208,9 +222,6 @@ class FilterService:
         mob_vals = dims["mob"]
         eid_vals = dims["eid"]
 
-        combos = list(itertools.product(sex_vals, treatment_vals, breed_vals, mob_vals, eid_vals))
-        # Dimensions that differ across filter combinations — labels must use these,
-        # not within-subset uniqueness (a single-breed subset has constant breed).
         combo_dims = {
             "sex": sex_vals,
             "treatment": treatment_vals,
@@ -221,10 +232,26 @@ class FilterService:
         varying_dims = [d for d, vals in combo_dims.items() if len(vals) > 1]
         all_overall = all(vals == ["Overall"] for vals in combo_dims.values())
 
+        # Fast path: single Overall group — no combo explosion / repeated copies.
+        if all_overall:
+            out = base_df.copy()
+            out["treatment_display"] = out["treatment"].apply(treatment_display)
+            combo = {
+                "sex": "Overall",
+                "treatment": "Overall",
+                "breed": "Overall",
+                "mob": "Overall",
+                "eid": "Overall",
+            }
+            out["group"] = FilterService.label_from_combo(combo, varying_dims, all_overall)
+            out["full_group"] = FilterService.full_label_from_combo(combo, is_admin)
+            return out
+
+        combos = list(itertools.product(sex_vals, treatment_vals, breed_vals, mob_vals, eid_vals))
         parts: list[pd.DataFrame] = []
 
         for sex_v, treat_v, breed_v, mob_v, eid_v in combos:
-            subset = base_df.copy()
+            subset = base_df
             if sex_v != "Overall":
                 subset = subset[subset["sex"] == sex_v]
             if treat_v != "Overall":
@@ -413,44 +440,66 @@ class FilterService:
 
     @staticmethod
     def get_filter_choices(farm_id: str, is_admin: bool) -> dict:
-        from app.db import fetch_all, fetch_one
+        from app.db import get_conn
+        import psycopg2.extras
 
-        total = fetch_one(
-            "SELECT COUNT(*) AS cnt FROM animal_data WHERE farm_id = %s", (farm_id,)
-        )
-        years = fetch_all(
-            "SELECT DISTINCT EXTRACT(YEAR FROM date)::int AS y FROM animal_data WHERE farm_id = %s ORDER BY y DESC",
-            (farm_id,),
-        )
-        year_list = [r["y"] for r in years]
+        # One connection + two queries instead of ~8 round-trips.
+        with get_conn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT
+                      COUNT(*)::int AS cnt,
+                      ARRAY(
+                        SELECT DISTINCT EXTRACT(YEAR FROM date)::int
+                        FROM animal_data
+                        WHERE farm_id = %s
+                        ORDER BY 1 DESC
+                      ) AS years
+                    FROM animal_data
+                    WHERE farm_id = %s
+                    """,
+                    (farm_id, farm_id),
+                )
+                meta = dict(cur.fetchone() or {})
+                cur.execute(
+                    """
+                    SELECT
+                      ARRAY(SELECT DISTINCT sex FROM animal_data WHERE farm_id = %s AND sex IS NOT NULL ORDER BY 1) AS sexes,
+                      ARRAY(SELECT DISTINCT treatment FROM animal_data WHERE farm_id = %s AND treatment IS NOT NULL ORDER BY 1) AS treatments,
+                      ARRAY(SELECT DISTINCT breed FROM animal_data WHERE farm_id = %s AND breed IS NOT NULL ORDER BY 1) AS breeds,
+                      ARRAY(SELECT DISTINCT mob FROM animal_data WHERE farm_id = %s AND mob IS NOT NULL ORDER BY 1) AS mobs,
+                      ARRAY(SELECT DISTINCT eid FROM animal_data WHERE farm_id = %s AND eid IS NOT NULL ORDER BY 1) AS eids
+                    """,
+                    (farm_id, farm_id, farm_id, farm_id, farm_id),
+                )
+                dims = dict(cur.fetchone() or {})
+
+        year_list = list(meta.get("years") or [])
         max_year = year_list[0] if year_list else None
+        sexes = list(dims.get("sexes") or [])
+        treatments_raw = [t for t in (dims.get("treatments") or []) if t]
+        breeds = list(dims.get("breeds") or [])
+        mobs = list(dims.get("mobs") or [])
+        eids = list(dims.get("eids") or [])
 
-        def distinct(col: str) -> list[str]:
-            rows = fetch_all(
-                f"SELECT DISTINCT {col} FROM animal_data WHERE farm_id = %s AND {col} IS NOT NULL ORDER BY 1",
-                (farm_id,),
-            )
-            return [r[col] for r in rows]
-
-        treatments = ["Overall", "No Treatment"] + [
-            t for t in distinct("treatment") if t
-        ]
+        treatments = ["Overall", "No Treatment"] + treatments_raw
         result = {
             "years": year_list,
             "months": MONTH_NAMES,
             "days": ["All"] + list(range(1, 32)),
-            "sexes": ["Overall"] + distinct("sex"),
+            "sexes": ["Overall"] + sexes,
             "treatments": treatments,
-            "breeds": ["Overall"] + distinct("breed"),
-            "mobs": ["Overall"] + distinct("mob"),
+            "breeds": ["Overall"] + breeds,
+            "mobs": ["Overall"] + mobs,
             "max_year": max_year,
             "measures": [
                 {"key": k, "label": MEASURE_LABELS[k]} for k in MEASURE_LABELS
             ],
-            "total_records": total["cnt"] if total else 0,
+            "total_records": int(meta.get("cnt") or 0),
         }
         if is_admin:
-            result["eids"] = ["Overall"] + distinct("eid")
+            result["eids"] = ["Overall"] + eids
         return result
 
     @staticmethod

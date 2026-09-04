@@ -12,7 +12,6 @@ from app.db import execute, execute_returning, fetch_all, fetch_one
 from app.models.schemas import EmailScheduleCreate, EmailSendNow, FilterState, SchedulePatch
 from app.services.data_service import DataService
 from app.services.email_service import EmailService, compute_next_send
-from app.services.report_generator import ReportGenerator
 
 router = APIRouter()
 
@@ -78,6 +77,8 @@ def send_now(body: EmailSendNow, user: Annotated[CurrentUser, Depends(get_curren
     filters_data = body.report_filters or {"farm_id": body.farm_id, "year": date.today().year}
     filters = FilterState(**filters_data)
     grouped = DataService.get_grouped_data(filters, user.is_admin)
+    from app.services.report_generator import ReportGenerator
+
     pdf = ReportGenerator.generate_pdf(filters, grouped, body.report_charts, farm_name)
     subject = body.email_subject or f"Automated Livestock Report - {farm_name}"
     html = EmailService.build_email_body(filters_data, body.email_body, farm_name)

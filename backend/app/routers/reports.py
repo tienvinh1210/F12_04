@@ -10,13 +10,14 @@ from app.config import get_settings
 from app.db import fetch_one
 from app.models.schemas import ChartPngRequest, ReportGenerateRequest
 from app.services.data_service import DataService
-from app.services.report_generator import ReportGenerator
 
 router = APIRouter()
 
 
 @router.post("/chart.png")
 def chart_png(body: ChartPngRequest, user: Annotated[CurrentUser, Depends(get_current_user)]):
+    from app.services.report_generator import ReportGenerator
+
     assert_farm_access(user, body.filters.farm_id)
     grouped = DataService.get_grouped_data(body.filters, user.is_admin)
     png = ReportGenerator.generate_chart_png(
@@ -27,6 +28,8 @@ def chart_png(body: ChartPngRequest, user: Annotated[CurrentUser, Depends(get_cu
 
 @router.post("/generate")
 def generate_report(body: ReportGenerateRequest, user: Annotated[CurrentUser, Depends(get_current_user)]):
+    from app.services.report_generator import ReportGenerator
+
     assert_farm_access(user, body.farm_id)
     farm = fetch_one("SELECT farm_name FROM farms WHERE farm_id = %s", (body.farm_id,))
     farm_name = farm["farm_name"] if farm else body.farm_id

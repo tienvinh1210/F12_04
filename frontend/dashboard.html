@@ -133,11 +133,11 @@
     document.addEventListener('DOMContentLoaded', () => {
       if (!requireAuth()) return;
       initSavedViews();
+      // Wait for filters + first query before rendering charts (avoids empty double-fetch).
       initFilters(() => {
         if (currentPage !== 'customise') renderCurrentPage();
       });
       loadLogos();
-      renderCurrentPage();
     });
   </script>
 </body>

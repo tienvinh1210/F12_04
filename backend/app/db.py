@@ -11,35 +11,56 @@ from psycopg2.pool import SimpleConnectionPool
 from app.config import get_settings
 
 _pool: SimpleConnectionPool | None = None
+_serverless_conn = None
 IS_SERVERLESS = bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
 
 
 def _connect():
     settings = get_settings()
-    return psycopg2.connect(settings.database_url, connect_timeout=10)
+    # Keepalives help detect dead Supabase pooler sockets after a warm freeze.
+    return psycopg2.connect(
+        settings.database_url,
+        connect_timeout=5,
+        keepalives=1,
+        keepalives_idle=30,
+        keepalives_interval=10,
+        keepalives_count=3,
+    )
 
 
 def get_pool() -> SimpleConnectionPool:
     global _pool
     if _pool is None:
         settings = get_settings()
-        _pool = SimpleConnectionPool(1, 5, settings.database_url)
+        _pool = SimpleConnectionPool(1, 5, settings.database_url, connect_timeout=5)
     return _pool
+
+
+def _reset_serverless_conn() -> None:
+    global _serverless_conn
+    if _serverless_conn is not None:
+        with contextlib.suppress(Exception):
+            _serverless_conn.close()
+        _serverless_conn = None
 
 
 @contextlib.contextmanager
 def get_conn() -> Generator[Any, None, None]:
-    # Fresh connection per request on Vercel — connection pools break across invocations
+    # Reuse one connection per warm serverless instance — opening SSL to Supabase
+    # on every fetch_all call was the main latency source after cold start.
     if IS_SERVERLESS:
-        conn = _connect()
+        global _serverless_conn
+        if _serverless_conn is None or _serverless_conn.closed:
+            _serverless_conn = _connect()
+        conn = _serverless_conn
         try:
             yield conn
             conn.commit()
         except Exception:
-            conn.rollback()
+            with contextlib.suppress(Exception):
+                conn.rollback()
+            _reset_serverless_conn()
             raise
-        finally:
-            conn.close()
         return
 
     pool = get_pool()

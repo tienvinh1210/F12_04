@@ -39,6 +39,8 @@ document.addEventListener('DOMContentLoaded', () => {
       e.preventDefault();
       const errEl = document.getElementById('login-error');
       errEl.classList.add('hidden');
+      const btn = form.querySelector('button[type="submit"]');
+      if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
       try {
         const data = await apiFetch('/auth/login', {
           method: 'POST',
@@ -53,9 +55,13 @@ document.addEventListener('DOMContentLoaded', () => {
       } catch (err) {
         errEl.textContent = err.message || 'Invalid credentials';
         errEl.classList.remove('hidden');
+        if (btn) { btn.disabled = false; btn.textContent = 'Sign In'; }
       }
     });
   }
+
+  // Wake the Vercel Python function early (cold starts import pandas/numpy).
+  fetch(`${typeof API_BASE !== 'undefined' ? API_BASE : '/api'}/health`).catch(() => {});
 
   const logoutBtn = document.getElementById('logout-btn');
   if (logoutBtn) logoutBtn.addEventListener('click', logout);

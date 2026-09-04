@@ -79,3 +79,4 @@ async function apiPostDownload(path, body, filename) {
 window.apiFetch = apiFetch;
 window.apiDownload = apiDownload;
 window.apiPostDownload = apiPostDownload;
+window.API_BASE = API_BASE;

@@ -18,8 +18,12 @@ router = APIRouter()
 
 def _query_response(body: DataQueryRequest, user: CurrentUser) -> dict:
     assert_farm_access(user, body.farm_id)
-    filtered, grouped, _, total_records = DataService.get_filtered_data(body, user.is_admin)
-    note = DataService.get_common_note(body, grouped)
+    # Count-only path: skip expensive group expansion used for charts.
+    need_groups = bool(body.include_rows)
+    filtered, grouped, _, total_records = DataService.get_filtered_data(
+        body, user.is_admin, build_groups=need_groups
+    )
+    note = DataService.get_common_note(body, grouped) if need_groups else None
     record_count = len(filtered)
 
     result = {
