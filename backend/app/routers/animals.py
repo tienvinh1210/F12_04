@@ -15,6 +15,26 @@ from app.utils.anonymize import anonymize_records
 
 router = APIRouter()
 
+# Columns returned for the Data Management table / CSV (admin full view).
+DATA_MGMT_COLUMNS = [
+    "date",
+    "eid",
+    "sex",
+    "breed",
+    "treatment",
+    "mob",
+    "weight",
+    "pweight",
+    "finalpweight",
+    "finalgrowthpbs",
+    "finaldailygrowth",
+    "feedintakekgd",
+    "methane",
+    "animalvalue",
+    "animalprod",
+    "carcassweight",
+]
+
 
 def _query_response(body: DataQueryRequest, user: CurrentUser) -> dict:
     assert_farm_access(user, body.farm_id)
@@ -30,33 +50,50 @@ def _query_response(body: DataQueryRequest, user: CurrentUser) -> dict:
             "filtered": [],
             "processed": [],
             "grouped": [],
+            "page": body.page or 1,
+            "page_size": body.page_size or 20,
+            "page_count": 0,
         }
 
-    filtered, grouped, _, total_records = DataService.get_filtered_data(
-        body, user.is_admin, build_groups=True
-    )
-    note = DataService.get_common_note(body, grouped)
-    record_count = len(filtered)
+    # Full row listing is admin-only (EID + downloadable farm data).
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required to view raw data")
 
-    result = {
+    filtered, _, _, total_records = DataService.get_filtered_data(
+        body, user.is_admin, build_groups=False
+    )
+    record_count = len(filtered)
+    page = max(1, int(body.page or 1))
+    page_size = max(5, min(100, int(body.page_size or 20)))
+    page_count = max(1, (record_count + page_size - 1) // page_size) if record_count else 0
+    if page_count and page > page_count:
+        page = page_count
+
+    filtered_records = FilterService.df_to_records(filtered)
+    start = (page - 1) * page_size
+    end = start + page_size
+    page_rows = filtered_records[start:end]
+
+    # Prefer a stable column set for the data table.
+    slim_rows = []
+    for row in page_rows:
+        slim = {col: row.get(col) for col in DATA_MGMT_COLUMNS}
+        if slim.get("treatment") is None:
+            slim["treatment"] = "No Treatment"
+        slim_rows.append(slim)
+
+    return {
         "record_count": record_count,
         "total_records": total_records,
-        "common_filters_note": note,
+        "common_filters_note": None,
+        "filtered": anonymize_records(slim_rows, user.is_admin),
+        "processed": [],
+        "grouped": [],
+        "page": page,
+        "page_size": page_size,
+        "page_count": page_count,
+        "columns": DATA_MGMT_COLUMNS,
     }
-
-    processed = grouped.copy() if not grouped.empty else filtered.copy()
-    filtered_records = FilterService.df_to_records(filtered)
-    processed_records = FilterService.df_to_records(processed)
-
-    if body.page and body.page_size:
-        start = (body.page - 1) * body.page_size
-        end = start + body.page_size
-        filtered_records = filtered_records[start:end]
-
-    result["filtered"] = anonymize_records(filtered_records, user.is_admin)
-    result["processed"] = anonymize_records(processed_records, user.is_admin)
-    result["grouped"] = anonymize_records(processed_records, user.is_admin)
-    return result
 
 
 @router.post("/query")
@@ -78,8 +115,8 @@ def export_csv(
     eid: str = Query("Overall"),
 ):
     assert_farm_access(user, farm_id)
-    if not user.is_admin and eid != "Overall":
-        raise HTTPException(status_code=403, detail="EID filter requires admin access")
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required to download CSV")
 
     def split_multi(val: str) -> list[str]:
         return [v.strip() for v in val.split("|") if v.strip()]
@@ -95,13 +132,21 @@ def export_csv(
         mob=split_multi(mob),
         eid=split_multi(eid),
     )
-    filtered, _, _, _ = DataService.get_filtered_data(filters, user.is_admin)
+    filtered, _, _, _ = DataService.get_filtered_data(filters, user.is_admin, build_groups=False)
     records = FilterService.df_to_records(filtered)
-    records = anonymize_records(records, user.is_admin)
+
+    # Stable column order for CSV; include any extra fields after the known set.
+    fieldnames: list[str] = []
+    if records:
+        extras = [k for k in records[0].keys() if k not in DATA_MGMT_COLUMNS]
+        fieldnames = [c for c in DATA_MGMT_COLUMNS if c in records[0]] + extras
+        for row in records:
+            if row.get("treatment") is None:
+                row["treatment"] = "No Treatment"
 
     output = io.StringIO()
-    if records:
-        writer = csv.DictWriter(output, fieldnames=records[0].keys())
+    if records and fieldnames:
+        writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(records)
     else:

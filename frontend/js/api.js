@@ -56,7 +56,14 @@ async function apiDownload(path, filename) {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
-  if (!res.ok) throw new Error('Download failed');
+  if (!res.ok) {
+    let msg = 'Download failed';
+    try {
+      const err = await res.json();
+      if (err.detail) msg = typeof err.detail === 'string' ? err.detail : msg;
+    } catch (_) { /* ignore */ }
+    throw new Error(msg);
+  }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

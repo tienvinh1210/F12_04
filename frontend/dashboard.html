@@ -16,7 +16,7 @@
         <button class="nav-tab" data-page="timeseries" role="tab">Time Series</button>
         <button class="nav-tab" data-page="distributions" role="tab">Distributions</button>
         <button class="nav-tab" data-page="cohorts" role="tab">Cohorts</button>
-        <button class="nav-tab" data-page="data-management" role="tab">Data Mgmt</button>
+        <button class="nav-tab" data-page="data-management" role="tab" id="nav-data-mgmt">Data Mgmt</button>
         <button class="nav-tab" data-page="customise" role="tab">Customise</button>
         <button class="nav-tab" data-page="reports" role="tab">Reports</button>
       </div>
@@ -111,6 +111,10 @@
     }
 
     function switchPage(page) {
+      if (page === 'data-management' && !getUser()?.is_admin) {
+        showToast('Data Management is admin only', 'warning');
+        return;
+      }
       currentPage = page;
       if (typeof resetTimeseriesShell === 'function') resetTimeseriesShell();
       document.querySelectorAll('.nav-tab').forEach(t => {
@@ -129,9 +133,17 @@
 
     document.addEventListener('DOMContentLoaded', () => {
       if (!requireAuth()) return;
+      const dataMgmtTab = document.getElementById('nav-data-mgmt');
+      if (dataMgmtTab && !getUser()?.is_admin) {
+        dataMgmtTab.classList.add('hidden');
+        dataMgmtTab.setAttribute('aria-hidden', 'true');
+      }
       initSavedViews();
       initFilters((opts = {}) => {
         if (currentPage === 'customise') return;
+        if (currentPage === 'data-management' && typeof resetDataManagementPage === 'function') {
+          resetDataManagementPage();
+        }
         renderCurrentPage(opts || {});
       });
     });

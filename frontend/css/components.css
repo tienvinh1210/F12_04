@@ -203,6 +203,7 @@ table.data-table th, table.data-table td {
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
   text-align: left;
+  white-space: nowrap;
 }
 
 table.data-table th {
@@ -213,6 +214,57 @@ table.data-table th {
 }
 
 table.data-table tr:hover { background: #f8f9fa; }
+
+.data-mgmt-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.data-mgmt-meta {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.pagination-bar {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.page-numbers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.page-ellipsis {
+  padding: 0 4px;
+  color: var(--text-secondary);
+}
+
+.page-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  margin-left: 8px;
+}
+
+.page-jump input {
+  width: 64px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font);
+}
 
 .empty-state {
   text-align: center;
