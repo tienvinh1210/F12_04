@@ -36,7 +36,15 @@ async function apiFetch(path, options = {}) {
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || 'Request failed');
+    const detail = err.detail;
+    let message = 'Request failed';
+    if (typeof detail === 'string') message = detail;
+    else if (Array.isArray(detail)) {
+      message = detail.map(e => e.msg || e.message || JSON.stringify(e)).join('; ');
+    } else if (detail && typeof detail === 'object') {
+      message = detail.msg || detail.message || JSON.stringify(detail);
+    }
+    throw new Error(message);
   }
   const ct = res.headers.get('content-type') || '';
   if (ct.includes('application/json')) return res.json();

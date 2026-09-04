@@ -29,7 +29,7 @@ def main():
         print("Set EMAIL_DRY_RUN=false in backend/.env to send for real.")
         sys.exit(0)
 
-    ok = EmailService.send_report_email(
+    ok, status = EmailService.send_report_email(
         recipient=recipient,
         subject="Livestock Dashboard — Test Email",
         body_html="<p>If you received this, SMTP is configured correctly.</p>",
@@ -37,9 +37,10 @@ def main():
         attachment_name="test.pdf",
     )
     if ok:
-        print("\nEmail sent successfully. Check the inbox (and spam folder).")
+        print(f"\nEmail sent successfully ({status}). Check the inbox (and spam folder).")
     else:
-        print("\nFailed to send. Check SMTP_USER, SMTP_PASSWORD, and EMAIL_FROM in backend/.env")
+        print(f"\nFailed to send: {status}")
+        print("Check SMTP_USER, SMTP_PASSWORD, and EMAIL_FROM in backend/.env")
         sys.exit(1)
 
 

@@ -72,22 +72,46 @@ def create_schedule(body: EmailScheduleCreate, user: Annotated[CurrentUser, Depe
 @router.post("/send-now")
 def send_now(body: EmailSendNow, user: Annotated[CurrentUser, Depends(get_current_user)]):
     assert_farm_access(user, body.farm_id)
+    if not (body.recipient_email or "").strip() or "@" not in body.recipient_email:
+        raise HTTPException(status_code=400, detail="Enter a valid recipient email")
+
     farm = fetch_one("SELECT farm_name FROM farms WHERE farm_id = %s", (body.farm_id,))
     farm_name = farm["farm_name"] if farm else body.farm_id
-    filters_data = body.report_filters or {"farm_id": body.farm_id, "year": date.today().year}
-    filters = FilterState(**filters_data)
-    filtered, grouped, _, _ = DataService.get_filtered_data(filters, user.is_admin)
-    from app.services.report_generator import ReportGenerator
 
-    pdf = ReportGenerator.generate_pdf(
-        filters, grouped, body.report_charts, farm_name, filtered_df=filtered
-    )
+    filters_data = dict(body.report_filters or {})
+    filters_data.setdefault("farm_id", body.farm_id)
+    if not filters_data.get("year"):
+        filters_data["year"] = date.today().year
+    # Coerce common UI shapes
+    if "day" in filters_data and filters_data["day"] is None:
+        filters_data["day"] = "All"
+    try:
+        filters = FilterState(**filters_data)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid report filters: {exc}") from exc
+
+    try:
+        filtered, grouped, _, _ = DataService.get_filtered_data(filters, user.is_admin)
+        from app.services.report_generator import ReportGenerator
+
+        charts = body.report_charts or ["Summary Statistics", "Distribution"]
+        pdf = ReportGenerator.generate_pdf(
+            filters, grouped, charts, farm_name, filtered_df=filtered
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to build report PDF: {exc}") from exc
+
     subject = body.email_subject or f"Automated Livestock Report - {farm_name}"
-    html = EmailService.build_email_body(filters_data, body.email_body, farm_name)
-    ok = EmailService.send_report_email(body.recipient_email, subject, html, pdf)
-    if not ok and not get_settings().email_dry_run:
-        raise HTTPException(status_code=500, detail="Failed to send email")
-    return {"detail": "Email sent" if ok else "Email queued (dry run)"}
+    html = EmailService.build_email_body(filters_data, body.email_body or "", farm_name)
+    ok, status = EmailService.send_report_email(body.recipient_email, subject, html, pdf)
+    if not ok:
+        raise HTTPException(status_code=500, detail=status or "Failed to send email")
+    if status == "dry_run":
+        return {
+            "detail": "Email dry-run only (not sent). Set EMAIL_DRY_RUN=false in Vercel env to send for real.",
+            "dry_run": True,
+        }
+    return {"detail": "Email sent", "dry_run": False}
 
 
 @router.patch("/schedules/{schedule_id}")

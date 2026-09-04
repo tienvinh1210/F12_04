@@ -69,19 +69,38 @@ async function generateReport() {
 }
 
 async function sendNow() {
+  const recipient = (document.getElementById('email-to').value || '').trim();
+  if (!recipient || !recipient.includes('@')) {
+    showToast('Enter a valid recipient email', 'error');
+    return;
+  }
+  const charts = [...document.querySelectorAll('.report-chart:checked')].map(c => c.value);
   const body = {
     farm_id: getFarmId(),
-    recipient_email: document.getElementById('email-to').value,
+    recipient_email: recipient,
     email_subject: document.getElementById('email-subject').value,
     email_body: document.getElementById('email-body').value,
     report_filters: getFilters(),
-    report_charts: ['Distribution', 'Summary Statistics'],
+    report_charts: charts.length ? charts : ['Summary Statistics', 'Distribution'],
     report_format: 'PDF',
   };
+  const btn = document.getElementById('send-now');
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
   try {
-    await apiFetch('/email/send-now', { method: 'POST', body: JSON.stringify(body) });
-    showToast('Email sent', 'success');
-  } catch (err) { showToast(err.message, 'error'); }
+    const res = await apiFetch('/email/send-now', { method: 'POST', body: JSON.stringify(body) });
+    if (res.dry_run) {
+      showToast(res.detail || 'Dry-run only — email was not sent', 'warning');
+    } else {
+      showToast(res.detail || 'Email sent', 'success');
+    }
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa fa-paper-plane"></i> Send Now';
+    }
+  }
 }
 
 async function createSchedule() {

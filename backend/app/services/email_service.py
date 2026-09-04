@@ -87,10 +87,15 @@ class EmailService:
         body_html: str,
         attachment_bytes: bytes,
         attachment_name: str = "report.pdf",
-    ) -> bool:
+    ) -> tuple[bool, str]:
+        """Send email. Returns (ok, message)."""
         settings = get_settings()
+        recipient = (recipient or "").strip()
+        if not recipient or "@" not in recipient:
+            return False, "Recipient email is required"
+
         if settings.email_dry_run:
-            return True
+            return True, "dry_run"
 
         if settings.email_provider.lower() == "smtp":
             return EmailService._send_via_smtp(
@@ -107,7 +112,7 @@ class EmailService:
         body_html: str,
         attachment_bytes: bytes,
         attachment_name: str,
-    ) -> bool:
+    ) -> tuple[bool, str]:
         import smtplib
         from email import encoders
         from email.mime.base import MIMEBase
@@ -116,13 +121,13 @@ class EmailService:
 
         settings = get_settings()
         if not settings.smtp_user or not settings.smtp_password:
-            return False
+            return False, "SMTP_USER / SMTP_PASSWORD are not configured"
 
         msg = MIMEMultipart()
         msg["From"] = settings.email_from or settings.smtp_user
         msg["To"] = recipient
         msg["Subject"] = subject
-        msg.attach(MIMEText(body_html, "html"))
+        msg.attach(MIMEText(body_html or "", "html"))
 
         part = MIMEBase("application", "octet-stream")
         part.set_payload(attachment_bytes)
@@ -131,14 +136,14 @@ class EmailService:
         msg.attach(part)
 
         try:
-            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=30) as server:
+            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=45) as server:
                 if settings.smtp_use_tls:
                     server.starttls()
                 server.login(settings.smtp_user, settings.smtp_password)
                 server.sendmail(msg["From"], [recipient], msg.as_string())
-            return True
-        except Exception:
-            return False
+            return True, "sent"
+        except Exception as exc:
+            return False, f"SMTP error: {exc}"
 
     @staticmethod
     def _send_via_resend(
@@ -147,10 +152,10 @@ class EmailService:
         body_html: str,
         attachment_bytes: bytes,
         attachment_name: str,
-    ) -> bool:
+    ) -> tuple[bool, str]:
         settings = get_settings()
         if not settings.resend_api_key:
-            return False
+            return False, "RESEND_API_KEY is not configured"
         try:
             import resend
 
@@ -160,7 +165,7 @@ class EmailService:
                     "from": settings.email_from,
                     "to": recipient,
                     "subject": subject,
-                    "html": body_html,
+                    "html": body_html or "",
                     "attachments": [
                         {
                             "filename": attachment_name,
@@ -169,9 +174,9 @@ class EmailService:
                     ],
                 }
             )
-            return True
-        except Exception:
-            return False
+            return True, "sent"
+        except Exception as exc:
+            return False, f"Resend error: {exc}"
 
     @staticmethod
     def build_email_body(filters: dict, custom_body: str, farm_name: str) -> str:
@@ -219,7 +224,7 @@ class EmailService:
                 body = EmailService.build_email_body(
                     filters_data, sched.get("email_body") or "", sched["farm_name"]
                 )
-                ok = EmailService.send_report_email(
+                ok, _msg = EmailService.send_report_email(
                     sched["recipient_email"], subject, body, pdf_bytes, "report.pdf"
                 )
                 if ok:
