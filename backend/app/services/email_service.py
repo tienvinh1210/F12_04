@@ -210,8 +210,14 @@ class EmailService:
         failed = 0
         for sched in schedules:
             try:
-                filters_data = sched.get("report_filters") or {}
-                filters = FilterState(**{**filters_data, "farm_id": sched["farm_id"]})
+                filters_data = dict(sched.get("report_filters") or {})
+                filters_data["farm_id"] = sched["farm_id"]
+                if not filters_data.get("year"):
+                    # Seed KF data is year 2023; fall back to that when filters omit year
+                    filters_data["year"] = 2023
+                if "day" in filters_data and filters_data["day"] is None:
+                    filters_data["day"] = "All"
+                filters = FilterState(**filters_data)
                 filtered, grouped, _, _ = DataService.get_filtered_data(filters, is_admin=True)
                 pdf_bytes = ReportGenerator.generate_pdf(
                     filters,

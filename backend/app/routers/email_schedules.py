@@ -139,21 +139,28 @@ def delete_schedule(schedule_id: int, user: Annotated[CurrentUser, Depends(get_c
     return {"detail": "Deleted"}
 
 
-@router.post("/process-due")
+@router.api_route("/process-due", methods=["GET", "POST"])
 def process_due(
-    x_cron_secret: str = Header(None, alias="X-Cron-Secret"),
+    x_cron_secret: str | None = Header(None, alias="X-Cron-Secret"),
     x_vercel_cron: str | None = Header(None, alias="x-vercel-cron"),
-    cron_secret: str | None = None,
+    authorization: str | None = Header(None),
+    cron_secret: str | None = Query(None),
 ):
     """Process due email schedules.
 
-    Auth (any one):
+    Vercel Cron invokes this path with GET (not POST). Auth (any one):
+    - Authorization: Bearer <CRON_SECRET> (Vercel sets this when CRON_SECRET env is set)
     - X-Cron-Secret / ?cron_secret= matching CRON_SECRET
-    - x-vercel-cron: 1 (sent automatically by Vercel Cron on Hobby/Pro)
+    - x-vercel-cron: 1 (legacy Vercel header)
     """
     settings = get_settings()
-    secret = x_cron_secret or cron_secret
-    allowed = (secret and secret == settings.cron_secret) or (x_vercel_cron == "1")
-    if not allowed:
+    expected = settings.cron_secret
+    bearer_ok = False
+    if authorization and expected and authorization.startswith("Bearer "):
+        bearer_ok = authorization.removeprefix("Bearer ").strip() == expected
+    header_or_query = x_cron_secret or cron_secret
+    secret_ok = bool(header_or_query and header_or_query == expected)
+    vercel_header_ok = x_vercel_cron == "1"
+    if not (bearer_ok or secret_ok or vercel_header_ok):
         raise HTTPException(status_code=401, detail="Invalid cron secret")
     return EmailService.process_due_emails()

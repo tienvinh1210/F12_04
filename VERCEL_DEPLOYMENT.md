@@ -152,7 +152,7 @@ Vercel **Hobby** only allows **once-per-day** cron jobs. This project uses:
 
 That runs **once daily at 23:00 UTC** (~9–10am Australia/Sydney depending on DST).
 
-No Pro plan required. Vercel sends `x-vercel-cron: 1` automatically; the API accepts that header.
+No Pro plan required. Vercel Cron uses **HTTP GET** (not POST). When `CRON_SECRET` is set in the project env, Vercel sends `Authorization: Bearer <CRON_SECRET>`; the API also accepts `x-vercel-cron: 1` and `?cron_secret=`.
 
 ### Optional: run more often for free (external cron)
 
