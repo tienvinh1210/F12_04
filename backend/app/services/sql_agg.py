@@ -286,6 +286,83 @@ def timeseries_sql(
     }
 
 
+# Cache full dimensional grain so checkbox toggles can be recomputed in the browser.
+_TS_GRAIN_CACHE: dict[tuple, tuple[float, dict]] = {}
+_TS_GRAIN_TTL = 300.0
+
+
+def _scope_where_sql(filters: FilterState) -> tuple[str, list[Any]]:
+    """Year/month/day scope only — dimension filters applied client-side."""
+    clauses = ["farm_id = %s", "date >= %s::date", "date < %s::date"]
+    params: list[Any] = [
+        filters.farm_id,
+        f"{filters.year}-01-01",
+        f"{filters.year + 1}-01-01",
+    ]
+    if filters.month and filters.month != "All":
+        clauses.append("EXTRACT(MONTH FROM date)::int = %s")
+        params.append(MONTH_NAMES.index(filters.month))
+    if filters.day and filters.day != "All":
+        clauses.append("EXTRACT(DAY FROM date)::int = %s")
+        params.append(int(filters.day))
+    return " AND ".join(clauses), params
+
+
+def timeseries_grain_sql(filters: FilterState, measure: str) -> dict:
+    """Return date×dim grain for client-side series assembly (checkbox-fast path)."""
+    import time
+
+    from app.db import fetch_all
+
+    measure = _validate_measure(measure)
+    cache_key = (
+        filters.farm_id,
+        filters.year,
+        filters.month or "All",
+        str(filters.day or "All"),
+        measure,
+    )
+    now = time.monotonic()
+    cached = _TS_GRAIN_CACHE.get(cache_key)
+    if cached and now - cached[0] < _TS_GRAIN_TTL:
+        return cached[1]
+
+    where, params = _scope_where_sql(filters)
+    rows = fetch_all(
+        f"""
+        SELECT
+          to_char(date, 'YYYY-MM-DD') AS d,
+          sex AS s,
+          CASE WHEN treatment IS NULL THEN 'No Treatment' ELSE treatment END AS t,
+          breed AS b,
+          mob AS m,
+          ROUND(AVG({measure})::numeric, 4)::float AS v,
+          COUNT(*)::int AS c
+        FROM animal_data
+        WHERE {where} AND {measure} IS NOT NULL
+        GROUP BY date, sex, treatment, breed, mob
+        ORDER BY date
+        """,
+        tuple(params),
+    )
+    label = MEASURE_LABELS.get(measure, measure)
+    unit = MEASURE_UNITS.get(measure, "")
+    payload = {
+        "grain": rows,
+        "y_label": f"{label} ({unit})",
+        "record_count": sum(int(r["c"]) for r in rows),
+        "scope": {
+            "farm_id": filters.farm_id,
+            "year": filters.year,
+            "month": filters.month or "All",
+            "day": str(filters.day or "All"),
+            "measure": measure,
+        },
+    }
+    _TS_GRAIN_CACHE[cache_key] = (now, payload)
+    return payload
+
+
 def summary_sql(filters: FilterState, is_admin: bool, measure: str) -> dict:
     measure = _validate_measure(measure)
     grain = _fetch_daily_grain(filters, is_admin, measure)

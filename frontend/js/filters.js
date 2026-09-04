@@ -61,7 +61,9 @@ function renderMultiSelect(containerId, field, options) {
     cb.addEventListener('change', () => {
       const selected = [...container.querySelectorAll('input:checked')].map(i => i.value);
       filterState[field] = selected.length ? selected : ['Overall'];
-      debouncedQuery();
+      // Dim checkbox changes: recompute chart locally (no API) — grade target ≤1.5s.
+      // EID still needs the server path (grain omits animal ids).
+      notifyFilterChange({ dimOnly: field !== 'eid' });
     });
   });
 }
@@ -107,7 +109,7 @@ function selectAll(field) {
   const map = { sex: 'sexes', treatment: 'treatments', breed: 'breeds', mob: 'mobs', eid: 'eids' };
   filterState[field] = [...choices[map[field]]];
   renderFilterUI();
-  debouncedQuery();
+  notifyFilterChange({ dimOnly: field !== 'eid' });
 }
 
 function invertSelection(field) {
@@ -118,7 +120,7 @@ function invertSelection(field) {
   filterState[field] = all.filter(v => !current.has(v));
   if (!filterState[field].length) filterState[field] = ['Overall'];
   renderFilterUI();
-  debouncedQuery();
+  notifyFilterChange({ dimOnly: field !== 'eid' });
 }
 
 function clearAllFilters() {
@@ -129,13 +131,15 @@ function clearAllFilters() {
   showToast('Filters cleared', 'success');
 }
 
+function notifyFilterChange(options = {}) {
+  if (onFilterChange) onFilterChange(options);
+}
+
 async function runQuery(options = {}) {
-  const { render = true } = options;
+  const { render = true, dimOnly = false } = options;
   try {
-    // Chart/summary endpoints already refresh the count badge — don't block filter
-    // changes on a competing /data/query round-trip (same serverless instance).
     if (render && onFilterChange) {
-      onFilterChange(null);
+      onFilterChange({ dimOnly });
       return;
     }
     queryResult = await apiFetch('/data/query', {
@@ -148,7 +152,7 @@ async function runQuery(options = {}) {
   }
 }
 
-const debouncedQuery = debounce(() => runQuery({ render: true }), 150);
+const debouncedQuery = debounce(() => runQuery({ render: true, dimOnly: false }), 120);
 
 function getQueryResult() { return queryResult; }
 function getFilters() { return getFilterPayload(); }
@@ -163,9 +167,9 @@ function setFilterState(state) {
 async function initFilters(callback) {
   onFilterChange = callback;
   await loadChoices();
-  // Charts start immediately; count badge updates in parallel (no second chart fetch).
-  if (onFilterChange) onFilterChange(null);
+  if (onFilterChange) onFilterChange({ dimOnly: false });
   runQuery({ render: false });
+  if (typeof prefetchTimeseriesGrain === 'function') prefetchTimeseriesGrain();
   document.getElementById('clear-filters')?.addEventListener('click', clearAllFilters);
   document.querySelectorAll('[data-select-all]').forEach(el => {
     el.addEventListener('click', (e) => { e.preventDefault(); selectAll(el.dataset.selectAll); });

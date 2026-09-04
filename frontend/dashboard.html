@@ -100,10 +100,12 @@
 
     let currentPage = 'summary';
 
-    function renderCurrentPage() {
+    function renderCurrentPage(options = {}) {
       const container = document.getElementById('page-content');
       const renderer = PAGE_RENDERERS[currentPage];
-      if (renderer) renderer(container);
+      if (!renderer) return;
+      if (currentPage === 'timeseries') renderer(container, options);
+      else renderer(container);
     }
 
     function switchPage(page) {
@@ -112,7 +114,7 @@
       document.querySelectorAll('.nav-tab').forEach(t => {
         t.classList.toggle('active', t.dataset.page === page);
       });
-      renderCurrentPage();
+      renderCurrentPage({ dimOnly: false });
     }
 
     document.querySelectorAll('.nav-tab').forEach(tab => {
@@ -134,9 +136,9 @@
     document.addEventListener('DOMContentLoaded', () => {
       if (!requireAuth()) return;
       initSavedViews();
-      // Wait for filters + first query before rendering charts (avoids empty double-fetch).
-      initFilters(() => {
-        if (currentPage !== 'customise') renderCurrentPage();
+      initFilters((opts = {}) => {
+        if (currentPage === 'customise') return;
+        renderCurrentPage(opts || {});
       });
       loadLogos();
     });

@@ -20,6 +20,16 @@ def timeseries(body: TimeseriesRequest, user: Annotated[CurrentUser, Depends(get
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.post("/timeseries-grain")
+def timeseries_grain(body: TimeseriesRequest, user: Annotated[CurrentUser, Depends(get_current_user)]):
+    """Dimensional daily grain for client-side chart assembly (sub-second checkbox updates)."""
+    assert_farm_access(user, body.farm_id)
+    try:
+        return sql_agg.timeseries_grain_sql(body, body.measure)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/distribution")
 def distribution(body: DistributionRequest, user: Annotated[CurrentUser, Depends(get_current_user)]):
     assert_farm_access(user, body.farm_id)

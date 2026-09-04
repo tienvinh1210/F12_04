@@ -4,6 +4,156 @@ let tsRequestId = 0;
 let tsAbort = null;
 let tsShellReady = false;
 let tsLastData = null;
+let tsGrainCache = null; // { key, grain, y_label, record_count }
+let tsPrefetchPromise = null;
+
+function tsScopeKey(filters) {
+  return [filters.farm_id, filters.year, filters.month || 'All', String(filters.day || 'All'), filters.measure].join('|');
+}
+
+function expandDim(selected) {
+  selected = selected && selected.length ? selected : ['Overall'];
+  const hasAll = selected.includes('Overall');
+  const specifics = selected.filter(v => v !== 'Overall');
+  if (hasAll && !specifics.length) return ['Overall'];
+  if (hasAll && specifics.length) return ['Overall', ...specifics];
+  if (specifics.length) return specifics;
+  return ['Overall'];
+}
+
+function friendlyLabel(col) {
+  if (col === 'treatment') return 'Treatment';
+  if (col === 'eid') return 'EID';
+  if (col === 'sex') return 'Sex';
+  if (col === 'breed') return 'Breed';
+  if (col === 'mob') return 'Mob';
+  return col;
+}
+
+function labelFromCombo(combo, varying, allOverall) {
+  if (allOverall || !varying.length) {
+    if (Object.values(combo).every(v => v === 'Overall')) return 'Overall Average';
+    const parts = ['sex', 'treatment', 'breed', 'mob', 'eid']
+      .filter(d => combo[d] && combo[d] !== 'Overall')
+      .map(d => `${friendlyLabel(d)}: ${combo[d]}`);
+    return parts.length ? parts.join(' | ') : 'Overall Average';
+  }
+  return varying.map(d => `${friendlyLabel(d)}: ${combo[d]}`).join(' | ');
+}
+
+function rowMatchesCombo(row, combo) {
+  if (combo.sex !== 'Overall' && row.s !== combo.sex) return false;
+  if (combo.treatment !== 'Overall' && row.t !== combo.treatment) return false;
+  if (combo.breed !== 'Overall' && row.b !== combo.breed) return false;
+  if (combo.mob !== 'Overall' && row.m !== combo.mob) return false;
+  return true;
+}
+
+function smoothSeries(series) {
+  const byGroup = {};
+  for (const row of series) {
+    if (String(row.group).includes('(trend)')) continue;
+    (byGroup[row.group] ||= []).push(row);
+  }
+  const extra = [];
+  for (const [group, pts] of Object.entries(byGroup)) {
+    pts.sort((a, b) => a.date.localeCompare(b.date));
+    if (pts.length < 3) continue;
+    const window = Math.max(3, Math.min(15, Math.floor(pts.length / 5) || 3));
+    const values = pts.map(p => p.value);
+    pts.forEach((p, i) => {
+      const lo = Math.max(0, i - Math.floor(window / 2));
+      const hi = Math.min(values.length, i + Math.floor(window / 2) + 1);
+      const chunk = values.slice(lo, hi);
+      const avg = chunk.reduce((a, b) => a + b, 0) / chunk.length;
+      extra.push({ date: p.date, group: `${group} (trend)`, value: Math.round(avg * 100) / 100, count: p.count });
+    });
+  }
+  return series.concat(extra);
+}
+
+function assembleTimeseriesFromGrain(grain, filters, yLabel, showSmooth) {
+  const dims = {
+    sex: expandDim(filters.sex),
+    treatment: expandDim(filters.treatment),
+    breed: expandDim(filters.breed),
+    mob: expandDim(filters.mob),
+    eid: ['Overall'],
+  };
+  const varying = Object.keys(dims).filter(d => dims[d].length > 1);
+  const allOverall = Object.values(dims).every(v => v.length === 1 && v[0] === 'Overall');
+  const combos = [];
+  for (const sex of dims.sex) {
+    for (const treatment of dims.treatment) {
+      for (const breed of dims.breed) {
+        for (const mob of dims.mob) {
+          combos.push({ sex, treatment, breed, mob, eid: 'Overall' });
+        }
+      }
+    }
+  }
+
+  const series = [];
+  const present = [];
+  const missing = [];
+  let recordCount = 0;
+
+  for (const combo of combos) {
+    const label = labelFromCombo(combo, varying, allOverall);
+    const buckets = new Map();
+    for (const row of grain) {
+      if (!rowMatchesCombo(row, combo)) continue;
+      const c = row.c | 0;
+      const v = +row.v;
+      recordCount += c;
+      const cur = buckets.get(row.d) || { w: 0, c: 0 };
+      cur.w += v * c;
+      cur.c += c;
+      buckets.set(row.d, cur);
+    }
+    if (!buckets.size) {
+      missing.push(label);
+      continue;
+    }
+    present.push(label);
+    for (const d of [...buckets.keys()].sort()) {
+      const b = buckets.get(d);
+      series.push({
+        date: d,
+        group: label,
+        value: b.c ? Math.round((b.w / b.c) * 100) / 100 : 0,
+        count: b.c,
+      });
+    }
+  }
+
+  // recordCount above double-counts when Overall+specifics overlap; use grain total instead
+  const grainCount = grain.reduce((sum, r) => sum + (r.c | 0), 0);
+
+  let outSeries = series;
+  if (showSmooth) outSeries = smoothSeries(series);
+
+  let note = null;
+  if (present.length > 1 && varying.length) {
+    note = varying.length === 1
+      ? `Comparing groups by ${friendlyLabel(varying[0])} only`
+      : `Comparing groups by ${varying.map(friendlyLabel).join(', ')}`;
+  }
+
+  return {
+    series: outSeries,
+    y_label: yLabel,
+    combo_coverage: {
+      expected: combos.length,
+      present: present.length,
+      missing: missing.length,
+      present_groups: present,
+      missing_groups: missing,
+    },
+    common_filters_note: note,
+    record_count: grainCount,
+  };
+}
 
 function ensureTimeseriesShell(container, data) {
   if (tsShellReady && container.querySelector('#ts-chart')) {
@@ -38,7 +188,7 @@ function ensureTimeseriesShell(container, data) {
     return;
   }
 
-  let html = `
+  container.innerHTML = `
     <div class="alert alert-info">Tip: Click on legend items to toggle their visibility on the time series plot below.</div>
     <div id="ts-filters-note" class="alert alert-muted ${data.common_filters_note ? '' : 'hidden'}">${data.common_filters_note || ''}</div>
     <div id="ts-coverage" class="hidden"></div>
@@ -47,7 +197,6 @@ function ensureTimeseriesShell(container, data) {
       <label><input type="checkbox" id="ts-trend" ${tsShowTrend ? 'checked' : ''}> Show Trend Line</label>
     </div>
     <div class="chart-card"><h3>Time Series Plot</h3><div id="ts-chart" style="height:500px"></div></div>`;
-  container.innerHTML = html;
   tsShellReady = true;
 
   const covEl = container.querySelector('#ts-coverage');
@@ -76,17 +225,98 @@ function ensureTimeseriesShell(container, data) {
     document.getElementById('ts-point-val').textContent = tsPointSize;
     if (tsLastData) drawTimeseries(tsLastData);
   };
-  document.getElementById('ts-trend').onchange = async (e) => {
+  document.getElementById('ts-trend').onchange = (e) => {
     tsShowTrend = e.target.checked;
-    await renderTimeseries(container, { soft: true });
+    applyTimeseriesFromCache(container);
   };
 }
 
+function applyTimeseriesFromCache(container) {
+  if (!tsGrainCache) return false;
+  const filters = getFilters();
+  if (tsGrainCache.key !== tsScopeKey(filters)) return false;
+  const data = assembleTimeseriesFromGrain(
+    tsGrainCache.grain,
+    filters,
+    tsGrainCache.y_label,
+    tsShowTrend,
+  );
+  if (typeof updateRecordCountBadge === 'function') {
+    updateRecordCountBadge(data.record_count);
+  }
+  if (!data.series.length) {
+    tsShellReady = false;
+    showEmptyState(container, filters);
+    return true;
+  }
+  tsLastData = data;
+  ensureTimeseriesShell(container, data);
+  drawTimeseries(data);
+  return true;
+}
+
+async function ensureTimeseriesGrain(filters, signal) {
+  const key = tsScopeKey(filters);
+  if (tsGrainCache && tsGrainCache.key === key) return tsGrainCache;
+
+  // EID comparisons still need the server timeseries path (grain omits eid).
+  const eid = filters.eid || ['Overall'];
+  if (getUser()?.is_admin && eid.some(v => v !== 'Overall')) {
+    return null;
+  }
+
+  const payload = await apiFetch('/charts/timeseries-grain', {
+    method: 'POST',
+    body: JSON.stringify({
+      farm_id: filters.farm_id,
+      year: filters.year,
+      month: filters.month,
+      day: filters.day,
+      measure: filters.measure,
+      sex: ['Overall'],
+      treatment: ['Overall'],
+      breed: ['Overall'],
+      mob: ['Overall'],
+      eid: ['Overall'],
+    }),
+    signal,
+  });
+  tsGrainCache = {
+    key,
+    grain: payload.grain || [],
+    y_label: payload.y_label,
+    record_count: payload.record_count,
+  };
+  return tsGrainCache;
+}
+
+async function prefetchTimeseriesGrain() {
+  const filters = getFilters();
+  if (!filters.year) return;
+  try {
+    tsPrefetchPromise = ensureTimeseriesGrain(filters);
+    await tsPrefetchPromise;
+  } catch {
+    /* ignore prefetch errors */
+  } finally {
+    tsPrefetchPromise = null;
+  }
+}
+
 async function renderTimeseries(container, options = {}) {
-  const soft = !!options.soft;
+  const dimOnly = !!options.dimOnly;
   if (!getFilters().year) {
     container.innerHTML = '<div class="alert alert-muted">Loading filters…</div>';
     tsShellReady = false;
+    return;
+  }
+
+  // Checkbox / dim-only changes: recompute locally — target << 1.5s (usually <100ms).
+  const eidActive = !!(getUser()?.is_admin && (getFilters().eid || ['Overall']).some(v => v !== 'Overall'));
+  if (dimOnly && !eidActive && applyTimeseriesFromCache(container)) {
+    return;
+  }
+  if (!eidActive && tsGrainCache && tsGrainCache.key === tsScopeKey(getFilters()) && applyTimeseriesFromCache(container)) {
     return;
   }
 
@@ -94,11 +324,10 @@ async function renderTimeseries(container, options = {}) {
   if (tsAbort) tsAbort.abort();
   tsAbort = new AbortController();
 
-  if (!soft && !tsShellReady) {
-    showLoading(container);
-  } else if (soft || tsShellReady) {
+  if (!tsShellReady) showLoading(container);
+  else {
     const chart = container.querySelector('#ts-chart');
-    if (chart && !chart.dataset.loading) {
+    if (chart) {
       chart.style.opacity = '0.55';
       chart.dataset.loading = '1';
     }
@@ -106,11 +335,27 @@ async function renderTimeseries(container, options = {}) {
 
   try {
     const filters = getFilters();
-    const data = await apiFetch('/charts/timeseries', {
-      method: 'POST',
-      body: JSON.stringify({ ...filters, point_size: tsPointSize, show_smooth: tsShowTrend }),
-      signal: tsAbort.signal,
-    });
+    const eid = filters.eid || ['Overall'];
+    const needsEid = !!(getUser()?.is_admin && eid.some(v => v !== 'Overall'));
+
+    let data;
+    if (needsEid) {
+      data = await apiFetch('/charts/timeseries', {
+        method: 'POST',
+        body: JSON.stringify({ ...filters, point_size: tsPointSize, show_smooth: tsShowTrend }),
+        signal: tsAbort.signal,
+      });
+    } else {
+      if (tsPrefetchPromise) await tsPrefetchPromise;
+      await ensureTimeseriesGrain(filters, tsAbort.signal);
+      if (reqId !== tsRequestId) return;
+      data = assembleTimeseriesFromGrain(
+        tsGrainCache.grain,
+        filters,
+        tsGrainCache.y_label,
+        tsShowTrend,
+      );
+    }
     if (reqId !== tsRequestId) return;
 
     if (typeof updateRecordCountBadge === 'function' && data.record_count != null) {
@@ -188,11 +433,8 @@ function drawTimeseries(data) {
   const opts = { responsive: true, displayModeBar: true };
   const el = document.getElementById('ts-chart');
   if (!el) return;
-  if (el.data) {
-    Plotly.react(el, traces, layout, opts);
-  } else {
-    Plotly.newPlot(el, traces, layout, opts);
-  }
+  if (el.data) Plotly.react(el, traces, layout, opts);
+  else Plotly.newPlot(el, traces, layout, opts);
 }
 
 function resetTimeseriesShell() {
@@ -202,3 +444,4 @@ function resetTimeseriesShell() {
 
 window.renderTimeseries = renderTimeseries;
 window.resetTimeseriesShell = resetTimeseriesShell;
+window.prefetchTimeseriesGrain = prefetchTimeseriesGrain;
