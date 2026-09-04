@@ -1,70 +1,78 @@
 """
-Vercel entrypoint.
+Vercel ASGI entrypoint.
 
-Health + auth use a slim FastAPI app (no pandas/numpy) so login cold starts
-stay under ~1.5s. All other /api routes load the full dashboard app lazily.
+Must expose a top-level FastAPI `app` (Vercel AST detection rejects custom handlers).
+Health + auth are registered immediately (no pandas). Remaining routers load on
+first non-auth request so login cold starts stay fast.
 """
 from __future__ import annotations
 
-import json
 import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 
-def _event_path(event: dict) -> str:
-    path = (
-        event.get("rawPath")
-        or event.get("path")
-        or (event.get("requestContext") or {}).get("http", {}).get("path")
-        or ""
+from app.config import get_settings
+from app.routers import auth
+
+settings = get_settings()
+
+app = FastAPI(title="Livestock Dashboard API", version=settings.app_version)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origin_list or ["*"],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?|https://.*\.vercel\.app",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/api/health")
+def health():
+    return {"status": "ok", "version": settings.app_version}
+
+
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+
+_heavy_loaded = False
+
+
+def _load_heavy_routers() -> None:
+    """Import pandas-backed routers only when a dashboard API route is hit."""
+    global _heavy_loaded
+    if _heavy_loaded:
+        return
+    from app.routers import (
+        admin,
+        animals,
+        charts,
+        cohorts,
+        email_schedules,
+        farms,
+        filters,
+        reports,
+        summary,
     )
-    return str(path)
+
+    app.include_router(farms.router, prefix="/api/farms", tags=["farms"])
+    app.include_router(filters.router, prefix="/api/filters", tags=["filters"])
+    app.include_router(animals.router, prefix="/api/data", tags=["data"])
+    app.include_router(summary.router, prefix="/api/summary", tags=["summary"])
+    app.include_router(charts.router, prefix="/api/charts", tags=["charts"])
+    app.include_router(cohorts.router, prefix="/api/cohorts", tags=["cohorts"])
+    app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
+    app.include_router(email_schedules.router, prefix="/api/email", tags=["email"])
+    app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
+    _heavy_loaded = True
 
 
-def _is_health(path: str) -> bool:
-    p = path.rstrip("/")
-    return p.endswith("/api/health") or p.endswith("/health")
-
-
-def _is_auth(path: str) -> bool:
-    return "/api/auth" in path
-
-
-class _LazyMangum:
-    def __init__(self):
-        self._health_auth = None
-        self._full = None
-
-    def __call__(self, event, context):
-        path = _event_path(event)
-
-        # Ultra-fast health — no framework import on the hottest warmup path.
-        if _is_health(path):
-            return {
-                "statusCode": 200,
-                "headers": {
-                    "content-type": "application/json",
-                    "cache-control": "no-store",
-                },
-                "body": json.dumps({"status": "ok", "version": "1.0.0"}),
-            }
-
-        from mangum import Mangum
-
-        if _is_auth(path):
-            if self._health_auth is None:
-                from app.auth_app import app as auth_app
-
-                self._health_auth = Mangum(auth_app, lifespan="off")
-            return self._health_auth(event, context)
-
-        if self._full is None:
-            from app.main import app as full_app
-
-            self._full = Mangum(full_app, lifespan="off")
-        return self._full(event, context)
-
-
-handler = _LazyMangum()
+@app.middleware("http")
+async def ensure_heavy_routers(request: Request, call_next):
+    path = request.url.path
+    if path.rstrip("/") != "/api/health" and not path.startswith("/api/auth"):
+        _load_heavy_routers()
+    return await call_next(request)
