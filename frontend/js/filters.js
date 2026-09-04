@@ -132,7 +132,12 @@ function clearAllFilters() {
 async function runQuery(options = {}) {
   const { render = true } = options;
   try {
-    if (render && onFilterChange) onFilterChange(null);
+    // Chart/summary endpoints already refresh the count badge — don't block filter
+    // changes on a competing /data/query round-trip (same serverless instance).
+    if (render && onFilterChange) {
+      onFilterChange(null);
+      return;
+    }
     queryResult = await apiFetch('/data/query', {
       method: 'POST',
       body: JSON.stringify({ ...getFilterPayload(), include_rows: false }),
@@ -143,7 +148,7 @@ async function runQuery(options = {}) {
   }
 }
 
-const debouncedQuery = debounce(() => runQuery({ render: true }), 300);
+const debouncedQuery = debounce(() => runQuery({ render: true }), 150);
 
 function getQueryResult() { return queryResult; }
 function getFilters() { return getFilterPayload(); }

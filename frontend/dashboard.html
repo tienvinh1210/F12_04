@@ -108,6 +108,7 @@
 
     function switchPage(page) {
       currentPage = page;
+      if (typeof resetTimeseriesShell === 'function') resetTimeseriesShell();
       document.querySelectorAll('.nav-tab').forEach(t => {
         t.classList.toggle('active', t.dataset.page === page);
       });

@@ -17,10 +17,12 @@ async function apiFetch(path, options = {}) {
   const token = sessionStorage.getItem('access_token');
   const headers = { 'Content-Type': 'application/json', ...options.headers };
   if (token) headers['Authorization'] = `Bearer ${token}`;
+  const { signal, ...rest } = options;
   let res;
   try {
-    res = await fetch(`${API_BASE}${path}`, { ...options, headers });
-  } catch {
+    res = await fetch(`${API_BASE}${path}`, { ...rest, headers, signal });
+  } catch (err) {
+    if (err && err.name === 'AbortError') throw err;
     throw new Error(
       'Cannot reach the API. Run: cd backend && uvicorn app.main:app --reload --port 8000 then open http://localhost:8000/login.html'
     );

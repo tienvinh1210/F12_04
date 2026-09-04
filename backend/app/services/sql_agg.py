@@ -83,17 +83,35 @@ def base_where_sql(filters: FilterState, is_admin: bool) -> tuple[str, list[Any]
     return " AND ".join(clauses), params
 
 
-def _combo_match(row: dict, combo: dict) -> bool:
-    if combo["sex"] != "Overall" and row["sex"] != combo["sex"]:
+def _active_group_cols(dims: dict[str, list[str]]) -> list[str]:
+    cols: list[str] = []
+    for dim, vals in dims.items():
+        if vals == ["Overall"]:
+            continue
+        if "Overall" in vals or len(vals) > 1:
+            cols.append(dim)
+    return cols
+
+
+def _combo_match(row: dict, combo: dict, group_cols: list[str] | None = None) -> bool:
+    """Match a grain row to a filter combo.
+
+    Dimensions collapsed in SQL (constant via WHERE) are not re-checked against
+    placeholder literals like sex='Overall'.
+    """
+    grouped = set(group_cols or ("sex", "treatment", "breed", "mob", "eid"))
+
+    if combo["sex"] != "Overall" and "sex" in grouped and row["sex"] != combo["sex"]:
         return False
-    treat = treatment_display(None if row["treatment"] == "__NONE__" else row["treatment"])
-    if combo["treatment"] != "Overall" and treat != combo["treatment"]:
+    if combo["treatment"] != "Overall" and "treatment" in grouped:
+        treat = treatment_display(None if row["treatment"] == "__NONE__" else row["treatment"])
+        if treat != combo["treatment"]:
+            return False
+    if combo["breed"] != "Overall" and "breed" in grouped and row["breed"] != combo["breed"]:
         return False
-    if combo["breed"] != "Overall" and row["breed"] != combo["breed"]:
+    if combo["mob"] != "Overall" and "mob" in grouped and row["mob"] != combo["mob"]:
         return False
-    if combo["mob"] != "Overall" and row["mob"] != combo["mob"]:
-        return False
-    if combo["eid"] != "Overall" and row.get("eid") != combo["eid"]:
+    if combo["eid"] != "Overall" and "eid" in grouped and row.get("eid") != combo["eid"]:
         return False
     return True
 
@@ -116,51 +134,37 @@ def _fetch_daily_grain(filters: FilterState, is_admin: bool, measure: str) -> li
     measure = _validate_measure(measure)
     where, params = base_where_sql(filters, is_admin)
     dims = expand_dims_from_filters(filters, is_admin)
-    all_overall = all(vals == ["Overall"] for vals in dims.values())
+    group_cols = _active_group_cols(dims)
 
-    # Fast path: single overall series — aggregate by date only in Postgres.
-    if all_overall:
-        rows = fetch_all(
-            f"""
-            SELECT
-              date,
-              'Overall' AS sex,
-              '__NONE__' AS treatment,
-              'Overall' AS breed,
-              'Overall' AS mob,
-              AVG({measure})::float AS value,
-              COUNT(*)::int AS count,
-              MIN({measure})::float AS min_v,
-              MAX({measure})::float AS max_v
-            FROM animal_data
-            WHERE {where} AND {measure} IS NOT NULL
-            GROUP BY date
-            ORDER BY date
-            """,
-            tuple(params),
+    def select_expr(col: str) -> str:
+        if col in group_cols:
+            if col == "treatment":
+                return "COALESCE(treatment, '__NONE__') AS treatment"
+            return col
+        if col == "treatment":
+            return "'__NONE__'::text AS treatment"
+        return f"'Overall'::text AS {col}"
+
+    select_parts = ["date"] + [select_expr(c) for c in ("sex", "treatment", "breed", "mob", "eid")]
+    if group_cols:
+        group_sql = ", ".join(
+            ["date"]
+            + ["COALESCE(treatment, '__NONE__')" if c == "treatment" else c for c in group_cols]
         )
-        return rows
-
-    need_eid = _need_eid(filters, is_admin)
-    eid_select = ", eid" if need_eid else ""
-    eid_group = ", eid" if need_eid else ""
+    else:
+        group_sql = "date"
 
     return fetch_all(
         f"""
         SELECT
-          date,
-          sex,
-          COALESCE(treatment, '__NONE__') AS treatment,
-          breed,
-          mob
-          {eid_select},
+          {", ".join(select_parts)},
           AVG({measure})::float AS value,
           COUNT(*)::int AS count,
           MIN({measure})::float AS min_v,
           MAX({measure})::float AS max_v
         FROM animal_data
         WHERE {where} AND {measure} IS NOT NULL
-        GROUP BY date, sex, treatment, breed, mob{eid_group}
+        GROUP BY {group_sql}
         ORDER BY date
         """,
         tuple(params),
@@ -197,6 +201,7 @@ def _series_for_combos(
     grain: list[dict], filters: FilterState, is_admin: bool
 ) -> tuple[list[dict], dict, str | None]:
     dims = expand_dims_from_filters(filters, is_admin)
+    group_cols = _active_group_cols(dims)
     combos = list(
         itertools.product(dims["sex"], dims["treatment"], dims["breed"], dims["mob"], dims["eid"])
     )
@@ -219,7 +224,7 @@ def _series_for_combos(
         buckets: dict[str, list[float]] = {}
         counts: dict[str, int] = {}
         for row in grain:
-            if not _combo_match(row, combo):
+            if not _combo_match(row, combo, group_cols):
                 continue
             d = _as_date(row["date"]).isoformat()
             c = int(row["count"] or 0)
@@ -285,6 +290,7 @@ def summary_sql(filters: FilterState, is_admin: bool, measure: str) -> dict:
     measure = _validate_measure(measure)
     grain = _fetch_daily_grain(filters, is_admin, measure)
     dims = expand_dims_from_filters(filters, is_admin)
+    group_cols = _active_group_cols(dims)
     combos = list(
         itertools.product(dims["sex"], dims["treatment"], dims["breed"], dims["mob"], dims["eid"])
     )
@@ -301,7 +307,7 @@ def summary_sql(filters: FilterState, is_admin: bool, measure: str) -> dict:
             "mob": mob_v,
             "eid": eid_v if is_admin else "Overall",
         }
-        matched = [r for r in grain if _combo_match(r, combo)]
+        matched = [r for r in grain if _combo_match(r, combo, group_cols)]
         if not matched:
             continue
         full = FilterService.full_label_from_combo(combo, is_admin)
@@ -393,6 +399,7 @@ def distribution_sql(
     hist_bins = max(10, min(50, hist_bins))
     where, params = base_where_sql(filters, is_admin)
     dims = expand_dims_from_filters(filters, is_admin)
+    group_cols = _active_group_cols(dims)
     combos = list(
         itertools.product(dims["sex"], dims["treatment"], dims["breed"], dims["mob"], dims["eid"])
     )
@@ -429,7 +436,8 @@ def distribution_sql(
             "eid": eid_v if is_admin else "Overall",
         }
         label = FilterService.label_from_combo(combo, varying, all_overall)
-        vals = [float(r["value"]) for r in rows if _combo_match(r, combo)]
+        # Distribution pulls raw rows with real dim values — match on all dims.
+        vals = [float(r["value"]) for r in rows if _combo_match(r, combo, None)]
         if not vals:
             continue
         sample = vals if len(vals) <= 500 else vals[:: max(1, len(vals) // 500)][:500]
