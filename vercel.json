@@ -11,7 +11,7 @@
     { "src": "/js/(.*)", "dest": "/frontend/js/$1" },
     { "src": "/login.html", "dest": "/frontend/login.html" },
     { "src": "/dashboard.html", "dest": "/frontend/dashboard.html" },
-    { "src": "/", "dest": "/frontend/index.html" },
+    { "src": "/", "dest": "/frontend/login.html" },
     { "src": "/(.*)", "dest": "/frontend/$1" }
   ],
   "crons": [
