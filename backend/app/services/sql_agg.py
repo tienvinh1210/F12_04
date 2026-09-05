@@ -421,15 +421,116 @@ def _kpi_from_values(values: list[float], label: str, unit: str) -> dict:
     }
 
 
+def summary_sql_fast(filters: FilterState, is_admin: bool, measure: str) -> dict:
+    """Observation-level KPIs via SQL aggregates (no row download).
+
+    Used by /filters/bootstrap for first paint. Correct mean/median/min/max/count.
+    """
+    from app.db import fetch_one
+
+    measure = _validate_measure(measure)
+    where, params = base_where_sql(filters, is_admin)
+    unit = MEASURE_UNITS.get(measure, "")
+    row = fetch_one(
+        f"""
+        WITH bounded AS (
+          SELECT date, {measure}::float AS m
+          FROM animal_data
+          WHERE {where} AND {measure} IS NOT NULL
+        ),
+        bounds AS (
+          SELECT MAX(date) AS max_d FROM bounded
+        )
+        SELECT
+          (SELECT max_d FROM bounds) AS max_d,
+          ROUND(AVG(m)::numeric, 2)::float AS mean_all,
+          ROUND(MIN(m)::numeric, 2)::float AS min_all,
+          ROUND(MAX(m)::numeric, 2)::float AS max_all,
+          ROUND((PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY m))::numeric, 2)::float AS med_all,
+          COUNT(*)::int AS c_all,
+          ROUND(AVG(m) FILTER (WHERE date = (SELECT max_d FROM bounds))::numeric, 2)::float AS mean_1,
+          ROUND(MIN(m) FILTER (WHERE date = (SELECT max_d FROM bounds))::numeric, 2)::float AS min_1,
+          ROUND(MAX(m) FILTER (WHERE date = (SELECT max_d FROM bounds))::numeric, 2)::float AS max_1,
+          ROUND((
+            SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY m)
+            FROM bounded WHERE date = (SELECT max_d FROM bounds)
+          )::numeric, 2)::float AS med_1,
+          COUNT(*) FILTER (WHERE date = (SELECT max_d FROM bounds))::int AS c_1,
+          ROUND(AVG(m) FILTER (WHERE date >= (SELECT max_d FROM bounds) - 14)::numeric, 2)::float AS mean_15,
+          ROUND(MIN(m) FILTER (WHERE date >= (SELECT max_d FROM bounds) - 14)::numeric, 2)::float AS min_15,
+          ROUND(MAX(m) FILTER (WHERE date >= (SELECT max_d FROM bounds) - 14)::numeric, 2)::float AS max_15,
+          ROUND((
+            SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY m)
+            FROM bounded WHERE date >= (SELECT max_d FROM bounds) - 14
+          )::numeric, 2)::float AS med_15,
+          COUNT(*) FILTER (WHERE date >= (SELECT max_d FROM bounds) - 14)::int AS c_15,
+          ROUND(AVG(m) FILTER (WHERE date >= (SELECT max_d FROM bounds) - 30)::numeric, 2)::float AS mean_31,
+          ROUND(MIN(m) FILTER (WHERE date >= (SELECT max_d FROM bounds) - 30)::numeric, 2)::float AS min_31,
+          ROUND(MAX(m) FILTER (WHERE date >= (SELECT max_d FROM bounds) - 30)::numeric, 2)::float AS max_31,
+          ROUND((
+            SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY m)
+            FROM bounded WHERE date >= (SELECT max_d FROM bounds) - 30
+          )::numeric, 2)::float AS med_31,
+          COUNT(*) FILTER (WHERE date >= (SELECT max_d FROM bounds) - 30)::int AS c_31
+        FROM bounded
+        """,
+        tuple(params),
+    )
+    if not row or not row.get("c_all"):
+        return {"groups": [], "record_count": 0}
+
+    max_d = _as_date(row["max_d"])
+    last_label = f"Last Day ({max_d.strftime('%d/%m/%Y')})"
+
+    def block(prefix: str, label: str) -> dict:
+        return {
+            "mean": float(row[f"mean_{prefix}"] or 0),
+            "min": float(row[f"min_{prefix}"] or 0),
+            "max": float(row[f"max_{prefix}"] or 0),
+            "median": float(row[f"med_{prefix}"] or 0),
+            "count": int(row[f"c_{prefix}"] or 0),
+            "unit": unit,
+            "label": label,
+        }
+
+    full = full_label_from_combo(
+        {
+            "sex": "Overall",
+            "treatment": "Overall",
+            "breed": "Overall",
+            "mob": "Overall",
+            "eid": "Overall",
+        },
+        is_admin,
+    )
+    return {
+        "groups": [
+            {
+                "full_group": full,
+                "windows": {
+                    "last_day": block("1", last_label),
+                    "last_15_days": block("15", "Last 15 Days"),
+                    "last_month": block("31", "Last Month"),
+                    "overall": block("all", "Overall"),
+                },
+            }
+        ],
+        "record_count": int(row["c_all"] or 0),
+    }
+
+
 def summary_sql(filters: FilterState, is_admin: bool, measure: str) -> dict:
     """Summary KPIs at observation level (mean/median/min/max/count over rows).
 
     Grain-based median (median of daily/group means) does not match R kpi_block /
     pandas Series.median() on raw measure values — this path uses observations.
     """
+    dims = expand_dims_from_filters(filters, is_admin)
+    if all(vals == ["Overall"] for vals in dims.values()):
+        return summary_sql_fast(filters, is_admin, measure)
+
     measure = _validate_measure(measure)
     obs = _fetch_measure_observations(filters, is_admin, measure)
-    dims = expand_dims_from_filters(filters, is_admin)
     group_cols = ["sex", "treatment", "breed", "mob", "eid"]
     combos = list(
         itertools.product(dims["sex"], dims["treatment"], dims["breed"], dims["mob"], dims["eid"])
