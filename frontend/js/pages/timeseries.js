@@ -534,6 +534,7 @@ window.getScopeGrainCache = () => {
 window.getScopeGrainCacheMap = () => tsGrainCacheMap;
 window.tsScopeKey = tsScopeKey;
 window.filterGrainByMonthDay = filterGrainByMonthDay;
+window.scheduleMeasureGrainPrefetch = scheduleMeasureGrainPrefetch;
 window.expandFilterDim = expandDim;
 window.grainRowMatchesCombo = rowMatchesCombo;
 window.grainFriendlyLabel = friendlyLabel;

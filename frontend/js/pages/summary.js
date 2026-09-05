@@ -180,6 +180,7 @@ async function renderSummary(container, options = {}) {
     } else {
       await ensureScopeGrain(filters);
       if (reqId !== summaryRequestId) return;
+      if (typeof scheduleMeasureGrainPrefetch === 'function') scheduleMeasureGrainPrefetch();
       const fresh = getScopeGrainCache();
       data = assembleSummaryFromGrain(fresh.grain, filters);
     }
