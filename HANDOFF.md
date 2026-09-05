@@ -217,7 +217,7 @@ Local secrets file: `backend/.env` (gitignored). Template: local `.env.example` 
 |---------|----------------|
 | Data Mgmt empty | year ≠ 2023 OR non-admin OR filters exclude all |
 | Data Mgmt 500 / “Request failed” | NaN in JSON (should be fixed; re-check df_to_records) |
-| Login slow/cold on Vercel | fat Python cold start — confirm request hits `api/light` (`"tier":"light"` on `/api/health`); enable Fluid + 5‑min keep-warm cron |
+| Login slow/cold on Vercel | fat Python cold start OR functions not in `syd1` (DB in Sydney) — confirm `/api/health` `"tier":"light"`; `vercel.json` `regions:[syd1]`; Fluid + 5‑min keep-warm |
 | Charts slow after checkbox | grain cache miss; EID filter forces server path |
 | Email no delivery | `EMAIL_DRY_RUN=true` |
 | Vercel python build fail | nested `-r` in requirements |

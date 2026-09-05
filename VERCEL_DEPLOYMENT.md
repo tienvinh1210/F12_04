@@ -186,6 +186,12 @@ Login and filter choices go through a **slim** function (`api/light/`) without p
 
 Fluid improves instance reuse; it does not replace keep-warm for a low-traffic demo app.
 
+### Function region (critical for Supabase Sydney)
+
+`vercel.json` sets `"regions": ["syd1"]` so Python functions run in **Sydney**, next to the Supabase `ap-southeast-2` pooler. The Vercel default (`iad1` US East) adds multi-second latency on every DB query (choices, grain, login).
+
+Confirm under **Settings → Functions → Region** (or after deploy, check that `vercel.json` regions applied). Hobby allows one region.
+
 ### External keep-warm (Hobby — every 4–5 minutes)
 
 Vercel Hobby cron is once/day, so use a free external ping to keep the **light** function warm:
