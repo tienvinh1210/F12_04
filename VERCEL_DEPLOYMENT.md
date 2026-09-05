@@ -175,8 +175,8 @@ Login and filter choices go through a **slim** function (`api/light/`) without p
 
 | Path | Function |
 |------|----------|
-| `/api/health`, `/api/auth/*`, `/api/filters/*` | `api/light/index.py` + `api/light/requirements.txt` |
-| `/api/charts/*`, `/api/summary/*`, `/api/data/*`, … | `api/index.py` + `api/requirements.txt` |
+| `/api/health`, `/api/auth/*`, `/api/filters/*`, `/api/summary/*`, `/api/charts/timeseries*`, `/api/charts/distribution` | `api/light/` (slim) |
+| `/api/charts/custom`, `/api/data/*`, cohorts/reports/email/admin | `api/index.py` (full) |
 
 ### Enable Fluid Compute (Vercel dashboard)
 

@@ -1,8 +1,8 @@
 """
-Slim Vercel entrypoint for login / health / filter choices.
+Slim Vercel entrypoint for login / health / filters / summary / charts grain.
 
-Kept free of pandas/matplotlib/reportlab so cold starts stay small.
-Heavy chart/data routes stay on api/index.py.
+No pandas/matplotlib/reportlab. Customise `/charts/custom` stays on api/index.py
+(pandas). First dashboard paint reuses the same warm instance as login.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routers import auth, filters
+from app.routers import auth, charts, filters, summary
 
 settings = get_settings()
 
@@ -37,3 +37,5 @@ def health():
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(filters.router, prefix="/api/filters", tags=["filters"])
+app.include_router(summary.router, prefix="/api/summary", tags=["summary"])
+app.include_router(charts.router, prefix="/api/charts", tags=["charts"])

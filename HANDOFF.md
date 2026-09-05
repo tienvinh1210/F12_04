@@ -38,7 +38,7 @@ NEVER:
 |-------|----------------|
 | UI | `frontend/` static HTML/CSS/JS + Plotly CDN |
 | API local | `backend/app/main.py` (mounts frontend, `/` → `/login.html`) |
-| API Vercel | `api/light/` (health+auth+filters, slim deps) + `api/index.py` (charts/data/reports, full deps); lazy heavy routers |
+| API Vercel | `api/light/` (health+auth+filters+summary+grain/charts SQL, slim deps) + `api/index.py` (custom/data/reports/email, full deps) |
 | DB | Supabase Postgres; schema `database/001_schema.sql` |
 | Auth | Custom JWT HS256 + scrypt; `sessionStorage`: `access_token`, `user` |
 | Deploy | `vercel.json` legacy `builds` (python + static); cron `0 23 * * *` → `GET /api/email/process-due` (Vercel Cron is GET-only) |

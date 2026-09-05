@@ -53,6 +53,30 @@ document.addEventListener('DOMContentLoaded', () => {
         setSession(data);
         // Redirect immediately — do not block on dashboard data prefetch.
         const farm = data.user.farms[0]?.farm_id || 'KF';
+        // Fire grain on the slim (already warm) function while the browser navigates.
+        const apiBase = typeof API_BASE !== 'undefined' ? API_BASE : '/api';
+        const year = Number(localStorage.getItem('livestock_last_year')) || 2023;
+        const measure = localStorage.getItem('livestock_last_measure') || 'finalpweight';
+        fetch(`${apiBase}/charts/timeseries-grain`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${data.access_token}`,
+          },
+          body: JSON.stringify({
+            farm_id: farm,
+            year,
+            month: 'All',
+            day: 'All',
+            measure,
+            sex: ['Overall'],
+            treatment: ['Overall'],
+            breed: ['Overall'],
+            mob: ['Overall'],
+            eid: ['Overall'],
+          }),
+          keepalive: true,
+        }).catch(() => {});
         window.location.href = `/dashboard.html?farm=${farm}`;
       } catch (err) {
         errEl.textContent = err.message || 'Invalid credentials';
