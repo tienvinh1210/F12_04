@@ -309,25 +309,26 @@ def _scope_where_sql(filters: FilterState) -> tuple[str, list[Any]]:
 
 
 def timeseries_grain_sql(filters: FilterState, measure: str) -> dict:
-    """Return date×dim grain for client-side series assembly (checkbox-fast path)."""
+    """Return date×dim grain for client-side series assembly (checkbox-fast path).
+
+    Month/day are intentionally ignored here — the client caches year×measure grain
+    and filters month/day locally so those controls stay interactive on Vercel.
+    """
     import time
 
     from app.db import fetch_all
 
     measure = _validate_measure(measure)
-    cache_key = (
-        filters.farm_id,
-        filters.year,
-        filters.month or "All",
-        str(filters.day or "All"),
-        measure,
-    )
+    # Year-only scope key (month/day applied in the browser).
+    cache_key = (filters.farm_id, filters.year, measure)
     now = time.monotonic()
     cached = _TS_GRAIN_CACHE.get(cache_key)
     if cached and now - cached[0] < _TS_GRAIN_TTL:
         return cached[1]
 
-    where, params = _scope_where_sql(filters)
+    # Force year-wide grain regardless of request month/day.
+    year_filters = filters.model_copy(update={"month": "All", "day": "All"})
+    where, params = _scope_where_sql(year_filters)
     rows = fetch_all(
         f"""
         SELECT
@@ -356,8 +357,8 @@ def timeseries_grain_sql(filters: FilterState, measure: str) -> dict:
         "scope": {
             "farm_id": filters.farm_id,
             "year": filters.year,
-            "month": filters.month or "All",
-            "day": str(filters.day or "All"),
+            "month": "All",
+            "day": "All",
             "measure": measure,
         },
     }

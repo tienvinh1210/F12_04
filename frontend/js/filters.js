@@ -78,12 +78,13 @@ function renderFilterUI() {
   const monthSel = document.getElementById('filter-month');
   if (monthSel) {
     monthSel.innerHTML = choices.months.map(m => `<option value="${m}" ${m === filterState.month ? 'selected' : ''}>${m}</option>`).join('');
-    monthSel.onchange = () => { filterState.month = monthSel.value; debouncedQuery(); };
+    // Month/day filter the cached year grain in-browser (same as dim checkboxes).
+    monthSel.onchange = () => { filterState.month = monthSel.value; notifyFilterChange({ dimOnly: true }); };
   }
   const daySel = document.getElementById('filter-day');
   if (daySel) {
     daySel.innerHTML = choices.days.map(d => `<option value="${d}" ${String(d) === String(filterState.day) ? 'selected' : ''}>${d}</option>`).join('');
-    daySel.onchange = () => { filterState.day = daySel.value; debouncedQuery(); };
+    daySel.onchange = () => { filterState.day = daySel.value; notifyFilterChange({ dimOnly: true }); };
   }
   renderMultiSelect('filter-sex', 'sex', choices.sexes);
   renderMultiSelect('filter-treatment', 'treatment', choices.treatments);
@@ -100,7 +101,17 @@ function renderFilterUI() {
   const measureSel = document.getElementById('filter-measure');
   if (measureSel) {
     measureSel.innerHTML = choices.measures.map(m => `<option value="${m.key}" ${m.key === filterState.measure ? 'selected' : ''}>${m.label}</option>`).join('');
-    measureSel.onchange = () => { filterState.measure = measureSel.value; debouncedQuery(); };
+    measureSel.onchange = () => {
+      filterState.measure = measureSel.value;
+      // Hit multi-measure grain cache when warm; otherwise fetch current measure only.
+      const key = typeof tsScopeKey === 'function' ? tsScopeKey(getFilterPayload()) : null;
+      const cached = key && typeof getScopeGrainCacheMap === 'function' && getScopeGrainCacheMap()[key];
+      if (cached) {
+        notifyFilterChange({ dimOnly: true });
+      } else {
+        debouncedQuery();
+      }
+    };
   }
 }
 

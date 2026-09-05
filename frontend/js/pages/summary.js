@@ -63,6 +63,9 @@ function kpiFromRows(rows, label, unit) {
 }
 
 function assembleSummaryFromGrain(grain, filters) {
+  if (typeof filterGrainByMonthDay === 'function') {
+    grain = filterGrainByMonthDay(grain, filters);
+  }
   const isAdmin = !!getUser()?.is_admin;
   const dims = {
     sex: expandFilterDim(filters.sex),

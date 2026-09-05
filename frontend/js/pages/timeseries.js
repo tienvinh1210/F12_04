@@ -4,12 +4,37 @@ let tsRequestId = 0;
 let tsAbort = null;
 let tsShellReady = false;
 let tsLastData = null;
-let tsGrainCache = null; // { key, grain, y_label, record_count }
+/** Active grain entry: { key, grain, y_label, record_count } */
+let tsGrainCache = null;
+/** farm|year|measure → grain entry (month/day filtered client-side) */
+const tsGrainCacheMap = Object.create(null);
 let tsPrefetchPromise = null;
 let tsGrainInflight = null; // { key, promise }
+let tsMeasurePrefetchTimer = null;
 
+const TS_MONTH_NAMES = [
+  'All', 'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+/** Cache key is year×measure only — month/day are applied in the browser. */
 function tsScopeKey(filters) {
-  return [filters.farm_id, filters.year, filters.month || 'All', String(filters.day || 'All'), filters.measure].join('|');
+  return [filters.farm_id, filters.year, filters.measure].join('|');
+}
+
+function filterGrainByMonthDay(grain, filters) {
+  const month = filters.month || 'All';
+  const day = filters.day == null ? 'All' : String(filters.day);
+  if (month === 'All' && day === 'All') return grain;
+  const monthNum = month === 'All' ? null : TS_MONTH_NAMES.indexOf(month);
+  const dayNum = day === 'All' ? null : parseInt(day, 10);
+  return grain.filter((r) => {
+    const mm = parseInt(String(r.d).slice(5, 7), 10);
+    const dd = parseInt(String(r.d).slice(8, 10), 10);
+    if (monthNum != null && monthNum > 0 && mm !== monthNum) return false;
+    if (dayNum != null && !Number.isNaN(dayNum) && dd !== dayNum) return false;
+    return true;
+  });
 }
 
 function expandDim(selected) {
@@ -74,6 +99,7 @@ function smoothSeries(series) {
 }
 
 function assembleTimeseriesFromGrain(grain, filters, yLabel, showSmooth) {
+  grain = filterGrainByMonthDay(grain, filters);
   const dims = {
     sex: expandDim(filters.sex),
     treatment: expandDim(filters.treatment),
@@ -233,13 +259,15 @@ function ensureTimeseriesShell(container, data) {
 }
 
 function applyTimeseriesFromCache(container) {
-  if (!tsGrainCache) return false;
   const filters = getFilters();
-  if (tsGrainCache.key !== tsScopeKey(filters)) return false;
+  const key = tsScopeKey(filters);
+  const entry = tsGrainCacheMap[key] || (tsGrainCache && tsGrainCache.key === key ? tsGrainCache : null);
+  if (!entry) return false;
+  tsGrainCache = entry;
   const data = assembleTimeseriesFromGrain(
-    tsGrainCache.grain,
+    entry.grain,
     filters,
-    tsGrainCache.y_label,
+    entry.y_label,
     tsShowTrend,
   );
   if (typeof updateRecordCountBadge === 'function') {
@@ -258,6 +286,10 @@ function applyTimeseriesFromCache(container) {
 
 async function ensureTimeseriesGrain(filters, signal) {
   const key = tsScopeKey(filters);
+  if (tsGrainCacheMap[key]) {
+    tsGrainCache = tsGrainCacheMap[key];
+    return tsGrainCache;
+  }
   if (tsGrainCache && tsGrainCache.key === key) return tsGrainCache;
 
   // EID comparisons still need the server timeseries path (grain omits eid).
@@ -271,13 +303,14 @@ async function ensureTimeseriesGrain(filters, signal) {
   }
 
   const promise = (async () => {
+    // Always fetch full year grain; month/day filtered in assemble*.
     const payload = await apiFetch('/charts/timeseries-grain', {
       method: 'POST',
       body: JSON.stringify({
         farm_id: filters.farm_id,
         year: filters.year,
-        month: filters.month,
-        day: filters.day,
+        month: 'All',
+        day: 'All',
         measure: filters.measure,
         sex: ['Overall'],
         treatment: ['Overall'],
@@ -287,13 +320,15 @@ async function ensureTimeseriesGrain(filters, signal) {
       }),
       signal,
     });
-    tsGrainCache = {
+    const entry = {
       key,
       grain: payload.grain || [],
       y_label: payload.y_label,
       record_count: payload.record_count,
     };
-    return tsGrainCache;
+    tsGrainCacheMap[key] = entry;
+    tsGrainCache = entry;
+    return entry;
   })();
 
   tsGrainInflight = { key, promise };
@@ -304,12 +339,38 @@ async function ensureTimeseriesGrain(filters, signal) {
   }
 }
 
+function scheduleMeasureGrainPrefetch() {
+  clearTimeout(tsMeasurePrefetchTimer);
+  tsMeasurePrefetchTimer = setTimeout(() => {
+    prefetchOtherMeasureGrains().catch(() => {});
+  }, 400);
+}
+
+async function prefetchOtherMeasureGrains() {
+  const filters = getFilters();
+  if (!filters.year) return;
+  const measures = (typeof choices !== 'undefined' && choices?.measures)
+    ? choices.measures.map((m) => m.key)
+    : ['finalpweight', 'finalgrowthpbs', 'methane', 'animalvalue', 'animalprod', 'carcassweight', 'feedintakekgd'];
+  for (const measure of measures) {
+    if (measure === filters.measure) continue;
+    const key = tsScopeKey({ ...filters, measure });
+    if (tsGrainCacheMap[key]) continue;
+    try {
+      await ensureTimeseriesGrain({ ...filters, measure, month: 'All', day: 'All' });
+    } catch {
+      /* ignore background prefetch errors */
+    }
+  }
+}
+
 async function prefetchTimeseriesGrain() {
   const filters = getFilters();
   if (!filters.year) return;
   try {
     tsPrefetchPromise = ensureTimeseriesGrain(filters);
     await tsPrefetchPromise;
+    scheduleMeasureGrainPrefetch();
   } catch {
     /* ignore prefetch errors */
   } finally {
@@ -363,6 +424,7 @@ async function renderTimeseries(container, options = {}) {
       if (tsPrefetchPromise) await tsPrefetchPromise;
       await ensureTimeseriesGrain(filters, tsAbort.signal);
       if (reqId !== tsRequestId) return;
+      scheduleMeasureGrainPrefetch();
       data = assembleTimeseriesFromGrain(
         tsGrainCache.grain,
         filters,
@@ -460,8 +522,18 @@ window.renderTimeseries = renderTimeseries;
 window.resetTimeseriesShell = resetTimeseriesShell;
 window.prefetchTimeseriesGrain = prefetchTimeseriesGrain;
 window.ensureScopeGrain = ensureTimeseriesGrain;
-window.getScopeGrainCache = () => tsGrainCache;
+window.getScopeGrainCache = () => {
+  try {
+    const filters = getFilters();
+    const key = tsScopeKey(filters);
+    return tsGrainCacheMap[key] || (tsGrainCache && tsGrainCache.key === key ? tsGrainCache : null);
+  } catch {
+    return tsGrainCache;
+  }
+};
+window.getScopeGrainCacheMap = () => tsGrainCacheMap;
 window.tsScopeKey = tsScopeKey;
+window.filterGrainByMonthDay = filterGrainByMonthDay;
 window.expandFilterDim = expandDim;
 window.grainRowMatchesCombo = rowMatchesCombo;
 window.grainFriendlyLabel = friendlyLabel;

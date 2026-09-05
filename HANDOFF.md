@@ -104,7 +104,7 @@ Saved views: `frontend/js/saved-views.js` (localStorage)
 | page id | file | notes |
 |---------|------|-------|
 | summary | summary.js | shares grain cache w/ timeseries via `ensureScopeGrain` |
-| timeseries | timeseries.js | `/charts/timeseries-grain`; client recompute on checkbox dims; EID active → refetch |
+| timeseries | timeseries.js | `/charts/timeseries-grain` year×measure cache; month/day + dims recompute client-side; other measures prefetched; EID → refetch |
 | distributions | distributions.js | `/charts/distribution` |
 | cohorts | cohorts.js | `/cohorts/analyze` + CSV |
 | data-management | data-management.js | ADMIN ONLY; paginated table + CSV |
