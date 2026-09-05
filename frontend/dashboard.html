@@ -6,7 +6,7 @@
   <title>Dashboard — Livestock Analytics</title>
   <link rel="stylesheet" href="/css/components.css">
   <link rel="stylesheet" href="/css/pages.css">
-  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <!-- Plotly deferred: Summary Stats does not need it on first paint -->
 </head>
 <body>
   <header>
@@ -98,15 +98,40 @@
     };
 
     let currentPage = 'summary';
+    let plotlyLoading = null;
+
+    function loadPlotly() {
+      if (window.Plotly) return Promise.resolve();
+      if (plotlyLoading) return plotlyLoading;
+      plotlyLoading = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.plot.ly/plotly-2.27.0.min.js';
+        s.async = true;
+        s.onload = () => resolve();
+        s.onerror = () => reject(new Error('Failed to load Plotly'));
+        document.head.appendChild(s);
+      });
+      return plotlyLoading;
+    }
 
     function renderCurrentPage(options = {}) {
       const container = document.getElementById('page-content');
       const renderer = PAGE_RENDERERS[currentPage];
       if (!renderer) return;
-      if (currentPage === 'timeseries' || currentPage === 'summary') {
-        renderer(container, options);
+      const needsPlotly = ['timeseries', 'distributions', 'customise'].includes(currentPage);
+      const run = () => {
+        if (currentPage === 'timeseries' || currentPage === 'summary') {
+          renderer(container, options);
+        } else {
+          renderer(container);
+        }
+      };
+      if (needsPlotly) {
+        loadPlotly().then(run).catch((err) => {
+          container.innerHTML = `<div class="alert alert-warning">${err.message}</div>`;
+        });
       } else {
-        renderer(container);
+        run();
       }
     }
 
@@ -138,6 +163,9 @@
         dataMgmtTab.classList.add('hidden');
         dataMgmtTab.setAttribute('aria-hidden', 'true');
       }
+      const bootCache = typeof takeBootCache === 'function' ? takeBootCache() : null;
+      // Prefetch Plotly in the background after first paint path starts.
+      setTimeout(() => { loadPlotly().catch(() => {}); }, 2500);
       initSavedViews();
       initFilters((opts = {}) => {
         if (currentPage === 'customise') return;
@@ -145,7 +173,7 @@
           resetDataManagementPage();
         }
         renderCurrentPage(opts || {});
-      });
+      }, bootCache);
     });
   </script>
 </body>

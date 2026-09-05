@@ -292,6 +292,25 @@ async function ensureTimeseriesGrain(filters, signal) {
   }
   if (tsGrainCache && tsGrainCache.key === key) return tsGrainCache;
 
+  // Seed from login boot cache when present (avoids a second cold grain fetch).
+  try {
+    const bootRaw = sessionStorage.getItem(typeof BOOT_CACHE_KEY !== 'undefined' ? BOOT_CACHE_KEY : 'boot_cache');
+    if (bootRaw) {
+      const boot = JSON.parse(bootRaw);
+      if (boot?.grain_key === key && boot.grain?.grain) {
+        const entry = {
+          key,
+          grain: boot.grain.grain || [],
+          y_label: boot.grain.y_label,
+          record_count: boot.grain.record_count,
+        };
+        tsGrainCacheMap[key] = entry;
+        tsGrainCache = entry;
+        return entry;
+      }
+    }
+  } catch (_) { /* ignore */ }
+
   // EID comparisons still need the server timeseries path (grain omits eid).
   const eid = filters.eid || ['Overall'];
   if (getUser()?.is_admin && eid.some(v => v !== 'Overall')) {

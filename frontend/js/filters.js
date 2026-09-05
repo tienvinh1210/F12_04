@@ -41,9 +41,13 @@ function updateRecordCountBadge(recordCount, totalRecords) {
   countEl.textContent = `Showing ${Number(recordCount).toLocaleString()} of ${Number(total).toLocaleString()} records`;
 }
 
-async function loadChoices() {
+async function loadChoices(preloaded) {
   const farmId = getFarmId();
-  choices = await apiFetch(`/filters/choices?farm_id=${farmId}`);
+  if (preloaded && preloaded.farm_id === farmId && preloaded.choices) {
+    choices = preloaded.choices;
+  } else {
+    choices = await apiFetch(`/filters/choices?farm_id=${farmId}`);
+  }
   if (!filterState.year && choices.max_year) {
     filterState.year = choices.max_year;
   }
@@ -175,11 +179,14 @@ function setFilterState(state) {
   debouncedQuery();
 }
 
-async function initFilters(callback) {
+async function initFilters(callback, bootCache = null) {
   onFilterChange = callback;
-  await loadChoices();
+  await loadChoices(bootCache);
   if (onFilterChange) onFilterChange({ dimOnly: false });
-  runQuery({ render: false });
+  // Record count comes from choices / grain — skip extra /data/query on boot.
+  if (choices?.total_records != null) {
+    updateRecordCountBadge(choices.total_records, choices.total_records);
+  }
   if (typeof prefetchTimeseriesGrain === 'function') prefetchTimeseriesGrain();
   document.getElementById('clear-filters')?.addEventListener('click', clearAllFilters);
   document.querySelectorAll('[data-select-all]').forEach(el => {

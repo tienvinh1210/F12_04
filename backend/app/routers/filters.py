@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 
 from app.auth.dependencies import CurrentUser, assert_farm_access, get_current_user
-from app.services.filter_service import FilterService
+from app.services.choices_service import get_filter_choices
 
 router = APIRouter()
 
@@ -16,4 +16,4 @@ def filter_choices(
     user: Annotated[CurrentUser, Depends(get_current_user)] = None,
 ):
     assert_farm_access(user, farm_id)
-    return FilterService.get_filter_choices(farm_id, user.is_admin)
+    return get_filter_choices(farm_id, user.is_admin)

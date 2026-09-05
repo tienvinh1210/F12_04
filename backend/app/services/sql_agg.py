@@ -6,7 +6,7 @@ from typing import Any
 
 from app.constants import MEASURE_CHOICES, MEASURE_LABELS, MEASURE_UNITS, MONTH_NAMES
 from app.models.schemas import FilterState
-from app.services.filter_service import FilterService, friendly_label, treatment_display
+from app.services.labels import friendly_label, full_label_from_combo, label_from_combo, treatment_display
 
 ALLOWED_MEASURES = set(MEASURE_CHOICES)
 
@@ -220,7 +220,7 @@ def _series_for_combos(
             "mob": mob_v,
             "eid": eid_v if is_admin else "Overall",
         }
-        label = FilterService.label_from_combo(combo, varying, all_overall)
+        label = label_from_combo(combo, varying, all_overall)
         buckets: dict[str, list[float]] = {}
         counts: dict[str, int] = {}
         for row in grain:
@@ -449,7 +449,7 @@ def summary_sql(filters: FilterState, is_admin: bool, measure: str) -> dict:
         matched = [r for r in obs if _combo_match(r, combo, group_cols)]
         if not matched:
             continue
-        full = FilterService.full_label_from_combo(combo, is_admin)
+        full = full_label_from_combo(combo, is_admin)
         max_d = max(_as_date(r["date"]) for r in matched)
 
         def window_values(days: int | None, matched_rows=matched, max_date=max_d) -> list[float]:
@@ -475,7 +475,7 @@ def summary_sql(filters: FilterState, is_admin: bool, measure: str) -> dict:
         )
 
     if len(groups_out) == 1 and all_overall:
-        groups_out[0]["full_group"] = FilterService.full_label_from_combo(
+        groups_out[0]["full_group"] = full_label_from_combo(
             {
                 "sex": "Overall",
                 "treatment": "Overall",
@@ -534,7 +534,7 @@ def distribution_sql(
             "mob": mob_v,
             "eid": eid_v if is_admin else "Overall",
         }
-        label = FilterService.label_from_combo(combo, varying, all_overall)
+        label = label_from_combo(combo, varying, all_overall)
         # Distribution pulls raw rows with real dim values — match on all dims.
         vals = [float(r["value"]) for r in rows if _combo_match(r, combo, None)]
         if not vals:

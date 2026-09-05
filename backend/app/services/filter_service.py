@@ -8,6 +8,7 @@ import pandas as pd
 
 from app.constants import MEASURE_LABELS, MEASURE_UNITS, MONTH_NAMES
 from app.models.schemas import FilterState
+from app.services.labels import friendly_label, full_label_from_combo, label_from_combo, treatment_display
 
 # Warm serverless instances keep this across requests — avoids re-pulling ~12k rows
 # from Supabase on every chart/summary call.
@@ -15,25 +16,13 @@ _FARM_DF_CACHE: dict[str, tuple[float, pd.DataFrame]] = {}
 _FARM_DF_TTL_SEC = 180
 
 
-def friendly_label(col: str) -> str:
-    if col in ("treatment", "treatment_display"):
-        return "Treatment"
-    if col == "eid":
-        return "EID"
-    if col == "date":
-        return "Date"
-    if col in MEASURE_LABELS:
-        return MEASURE_LABELS[col]
-    return col.replace("_", " ").title()
-
-
-def treatment_display(val: Any) -> str:
-    if val is None or (isinstance(val, float) and pd.isna(val)):
-        return "No Treatment"
-    return str(val)
-
-
 class FilterService:
+    # Re-export label helpers so existing FilterService.* call sites keep working.
+    friendly_label = staticmethod(friendly_label)
+    treatment_display = staticmethod(treatment_display)
+    label_from_combo = staticmethod(label_from_combo)
+    full_label_from_combo = staticmethod(full_label_from_combo)
+
     @staticmethod
     def load_farm_dataframe(farm_id: str, *, use_cache: bool = True) -> pd.DataFrame:
         from app.db import fetch_all
@@ -285,29 +274,6 @@ class FilterService:
         return pd.concat(parts, ignore_index=True)
 
     @staticmethod
-    def label_from_combo(combo: dict, varying_dims: list[str], all_overall: bool) -> str:
-        if all_overall or not varying_dims:
-            if all(v == "Overall" for v in combo.values()):
-                return "Overall Average"
-            # Single combo with some specific filter — show non-Overall dims
-            parts = [
-                f"{friendly_label(d)}: {combo[d]}"
-                for d in ("sex", "treatment", "breed", "mob", "eid")
-                if combo.get(d) and combo[d] != "Overall"
-            ]
-            return " | ".join(parts) if parts else "Overall Average"
-        return " | ".join(f"{friendly_label(d)}: {combo[d]}" for d in varying_dims)
-
-    @staticmethod
-    def full_label_from_combo(combo: dict, is_admin: bool) -> str:
-        parts = []
-        for col in ("sex", "treatment", "breed", "mob"):
-            parts.append(f"{friendly_label(col)}: {combo.get(col, 'Overall')}")
-        eid = combo.get("eid", "Overall") if is_admin else "*****"
-        parts.append(f"EID: {eid}")
-        return ", ".join(parts)
-
-    @staticmethod
     def create_simplified_group_labels(
         df: pd.DataFrame, filters: FilterState, is_admin: bool
     ) -> str:
@@ -440,67 +406,9 @@ class FilterService:
 
     @staticmethod
     def get_filter_choices(farm_id: str, is_admin: bool) -> dict:
-        from app.db import get_conn
-        import psycopg2.extras
+        from app.services.choices_service import get_filter_choices as _get
 
-        # One connection + two queries instead of ~8 round-trips.
-        with get_conn() as conn:
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                cur.execute(
-                    """
-                    SELECT
-                      COUNT(*)::int AS cnt,
-                      ARRAY(
-                        SELECT DISTINCT EXTRACT(YEAR FROM date)::int
-                        FROM animal_data
-                        WHERE farm_id = %s
-                        ORDER BY 1 DESC
-                      ) AS years
-                    FROM animal_data
-                    WHERE farm_id = %s
-                    """,
-                    (farm_id, farm_id),
-                )
-                meta = dict(cur.fetchone() or {})
-                cur.execute(
-                    """
-                    SELECT
-                      ARRAY(SELECT DISTINCT sex FROM animal_data WHERE farm_id = %s AND sex IS NOT NULL ORDER BY 1) AS sexes,
-                      ARRAY(SELECT DISTINCT treatment FROM animal_data WHERE farm_id = %s AND treatment IS NOT NULL ORDER BY 1) AS treatments,
-                      ARRAY(SELECT DISTINCT breed FROM animal_data WHERE farm_id = %s AND breed IS NOT NULL ORDER BY 1) AS breeds,
-                      ARRAY(SELECT DISTINCT mob FROM animal_data WHERE farm_id = %s AND mob IS NOT NULL ORDER BY 1) AS mobs,
-                      ARRAY(SELECT DISTINCT eid FROM animal_data WHERE farm_id = %s AND eid IS NOT NULL ORDER BY 1) AS eids
-                    """,
-                    (farm_id, farm_id, farm_id, farm_id, farm_id),
-                )
-                dims = dict(cur.fetchone() or {})
-
-        year_list = list(meta.get("years") or [])
-        max_year = year_list[0] if year_list else None
-        sexes = list(dims.get("sexes") or [])
-        treatments_raw = [t for t in (dims.get("treatments") or []) if t]
-        breeds = list(dims.get("breeds") or [])
-        mobs = list(dims.get("mobs") or [])
-        eids = list(dims.get("eids") or [])
-
-        treatments = ["Overall", "No Treatment"] + treatments_raw
-        result = {
-            "years": year_list,
-            "months": MONTH_NAMES,
-            "days": ["All"] + list(range(1, 32)),
-            "sexes": ["Overall"] + sexes,
-            "treatments": treatments,
-            "breeds": ["Overall"] + breeds,
-            "mobs": ["Overall"] + mobs,
-            "max_year": max_year,
-            "measures": [
-                {"key": k, "label": MEASURE_LABELS[k]} for k in MEASURE_LABELS
-            ],
-            "total_records": int(meta.get("cnt") or 0),
-        }
-        if is_admin:
-            result["eids"] = ["Overall"] + eids
-        return result
+        return _get(farm_id, is_admin)
 
     @staticmethod
     def df_to_records(df: pd.DataFrame) -> list[dict]:
