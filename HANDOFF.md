@@ -38,7 +38,7 @@ NEVER:
 |-------|----------------|
 | UI | `frontend/` static HTML/CSS/JS + Plotly CDN |
 | API local | `backend/app/main.py` (mounts frontend, `/` → `/login.html`) |
-| API Vercel | `api/index.py` top-level FastAPI `app`; health+auth+filters eager (no pandas); charts/summary lazy; pandas routers last |
+| API Vercel | `api/light/` (health+auth+filters, slim deps) + `api/index.py` (charts/data/reports, full deps); lazy heavy routers |
 | DB | Supabase Postgres; schema `database/001_schema.sql` |
 | Auth | Custom JWT HS256 + scrypt; `sessionStorage`: `access_token`, `user` |
 | Deploy | `vercel.json` legacy `builds` (python + static); cron `0 23 * * *` → `GET /api/email/process-due` (Vercel Cron is GET-only) |
@@ -144,7 +144,8 @@ Schemas: `backend/app/models/schemas.py`
 ## File ownership (edit targets)
 
 ```
-api/index.py, api/requirements.txt, vercel.json     # deploy/cold-start
+api/light/index.py + api/light/requirements.txt     # slim health/auth/filters
+api/index.py, api/requirements.txt, vercel.json     # deploy/cold-start (heavy)
 backend/app/main.py                                 # local server+static
 backend/app/config.py, db.py, auth/*                # config/auth
 backend/app/routers/*.py                            # HTTP
@@ -166,7 +167,7 @@ admin-cli/admin.py
 
 ## Finished work (do not redo)
 
-- Vercel: inlined requirements, FastAPI `app` export, lazy heavy routers, Hobby daily cron, static routes, `/`→login
+- Vercel: slim `api/light/` for health/auth/filters; heavy `api/index.py` for charts/data/reports; Hobby daily email cron; static routes; `/`→login; keep-warm via external cron (see VERCEL_DEPLOYMENT.md); enable Fluid Compute in project settings
 - Perf: SQL agg path; timeseries grain + client cache; summary KPIs are observation-level (not median-of-daily-means); slim login CSS; auth path avoids pandas
 - Reports: multi-chart PDF/HTML; readable date axes; no bogus double units
 - Email: surface SMTP/dry-run errors; validate recipient; real send needs `EMAIL_DRY_RUN=false` + SMTP app password on Vercel
@@ -216,7 +217,7 @@ Local secrets file: `backend/.env` (gitignored). Template: local `.env.example` 
 |---------|----------------|
 | Data Mgmt empty | year ≠ 2023 OR non-admin OR filters exclude all |
 | Data Mgmt 500 / “Request failed” | NaN in JSON (should be fixed; re-check df_to_records) |
-| Login slow/cold on Vercel | first hit loading heavy routers after auth — health/auth should stay light |
+| Login slow/cold on Vercel | fat Python cold start — confirm request hits `api/light` (`"tier":"light"` on `/api/health`); enable Fluid + 5‑min keep-warm cron |
 | Charts slow after checkbox | grain cache miss; EID filter forces server path |
 | Email no delivery | `EMAIL_DRY_RUN=true` |
 | Vercel python build fail | nested `-r` in requirements |

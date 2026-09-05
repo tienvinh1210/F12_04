@@ -169,6 +169,39 @@ You can then remove the `crons` block from `vercel.json` entirely if you only us
 
 ---
 
+## Step 4b — Cold starts: slim light API + keep-warm + Fluid
+
+Login and filter choices go through a **slim** function (`api/light/`) without pandas/matplotlib/reportlab. Charts/data/reports stay on `api/index.py`.
+
+| Path | Function |
+|------|----------|
+| `/api/health`, `/api/auth/*`, `/api/filters/*` | `api/light/index.py` + `api/light/requirements.txt` |
+| `/api/charts/*`, `/api/summary/*`, `/api/data/*`, … | `api/index.py` + `api/requirements.txt` |
+
+### Enable Fluid Compute (Vercel dashboard)
+
+1. Open the project → **Settings** → **Functions**
+2. Turn **Fluid Compute** **on** (available on Hobby; older projects may need a manual toggle)
+3. Redeploy if the UI asks you to
+
+Fluid improves instance reuse; it does not replace keep-warm for a low-traffic demo app.
+
+### External keep-warm (Hobby — every 4–5 minutes)
+
+Vercel Hobby cron is once/day, so use a free external ping to keep the **light** function warm:
+
+1. Sign up at [cron-job.org](https://cron-job.org) (or equivalent)
+2. Create a job:
+   - **URL:** `https://f12-04.vercel.app/api/health` (or your production URL)
+   - **Method:** `GET`
+   - **Schedule:** every **5 minutes**
+3. Optional second job (warms the heavy charts function before demos):
+   - **URL:** `https://f12-04.vercel.app/api/health` is light-only — for grain, hit a cheap authenticated path during manual demo warm-up, or accept first chart load after idle may be slower
+
+After keep-warm is active, typical login should stay well under the old ~5s cold path.
+
+---
+
 ## Step 5 — Deploy
 
 ### Via GitHub (auto-deploy)

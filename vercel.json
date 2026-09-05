@@ -1,10 +1,14 @@
 {
   "version": 2,
   "builds": [
+    { "src": "api/light/index.py", "use": "@vercel/python" },
     { "src": "api/index.py", "use": "@vercel/python" },
     { "src": "frontend/**", "use": "@vercel/static" }
   ],
   "routes": [
+    { "src": "/api/health", "dest": "api/light/index.py" },
+    { "src": "/api/auth/(.*)", "dest": "api/light/index.py" },
+    { "src": "/api/filters/(.*)", "dest": "api/light/index.py" },
     { "src": "/api/(.*)", "dest": "api/index.py" },
     { "src": "/assets/(.*)", "dest": "/frontend/assets/$1" },
     { "src": "/css/(.*)", "dest": "/frontend/css/$1" },

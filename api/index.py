@@ -1,12 +1,7 @@
 """
-Vercel ASGI entrypoint.
+Vercel ASGI entrypoint for charts / data / reports / email (heavy deps).
 
-Must expose a top-level FastAPI `app` (Vercel AST detection rejects custom handlers).
-
-Cold-start strategy:
-- health + auth + filters are registered immediately (no pandas)
-- charts/summary/data/etc. load on first matching request (sql_agg has no pandas)
-- pandas-heavy routers (cohorts/reports/email/admin/animals rows) load last
+Auth, health, and filter choices are served by api/light/index.py instead.
 """
 from __future__ import annotations
 
@@ -19,7 +14,6 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routers import auth, filters
 
 settings = get_settings()
 
@@ -33,21 +27,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-@app.get("/api/health")
-def health():
-    return {"status": "ok", "version": settings.app_version}
-
-
-app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
-# Choices are needed on every dashboard boot — keep off the pandas import path.
-app.include_router(filters.router, prefix="/api/filters", tags=["filters"])
-
 _loaded: set[str] = set()
 
 
 def _load(group: str) -> None:
-    """Import router groups lazily. charts/summary avoid pandas."""
+    """Import router groups lazily. charts/summary avoid pandas; animals/reports do not."""
     if group in _loaded:
         return
     if group == "charts":
@@ -73,14 +57,11 @@ def _load(group: str) -> None:
 @app.middleware("http")
 async def ensure_routers(request: Request, call_next):
     path = request.url.path
-    if path.rstrip("/") == "/api/health" or path.startswith("/api/auth") or path.startswith("/api/filters"):
-        return await call_next(request)
     if path.startswith("/api/charts") or path.startswith("/api/summary"):
         _load("charts")
     elif path.startswith("/api/data") or path.startswith("/api/farms"):
         _load("data")
     elif path.startswith("/api/"):
-        # Remaining API surface may need several groups (e.g. reports → data helpers).
         _load("charts")
         _load("data")
         _load("heavy")
