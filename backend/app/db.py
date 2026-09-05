@@ -20,7 +20,7 @@ def _connect():
     # Keepalives help detect dead Supabase pooler sockets after a warm freeze.
     return psycopg2.connect(
         settings.database_url,
-        connect_timeout=5,
+        connect_timeout=3,
         keepalives=1,
         keepalives_idle=30,
         keepalives_interval=10,

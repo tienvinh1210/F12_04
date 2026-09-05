@@ -182,32 +182,53 @@ function setFilterState(state) {
 async function initFilters(callback, bootCache = null) {
   onFilterChange = callback;
 
-  // Kick grain fetch in parallel with choices (year hint from last visit / KF default).
   const farmId = getFarmId();
-  const yearHint = Number(localStorage.getItem('livestock_last_year')) || 2023;
   const measureHint = localStorage.getItem('livestock_last_measure') || filterState.measure || 'finalpweight';
-  if (!filterState.year) filterState.year = yearHint;
-  if (typeof ensureScopeGrain === 'function') {
-    ensureScopeGrain({
-      farm_id: farmId,
-      year: yearHint,
-      month: 'All',
-      day: 'All',
-      measure: measureHint,
-      sex: ['Overall'],
-      treatment: ['Overall'],
-      breed: ['Overall'],
-      mob: ['Overall'],
-      eid: ['Overall'],
-    }).catch(() => {});
-  }
 
-  await loadChoices(bootCache);
-  if (choices?.max_year) {
-    filterState.year = choices.max_year;
-    try { localStorage.setItem('livestock_last_year', String(choices.max_year)); } catch (_) { /* ignore */ }
+  // Single round-trip: choices + grain on the slim API (one DB session).
+  try {
+    const boot = await apiFetch(
+      `/filters/bootstrap?farm_id=${encodeURIComponent(farmId)}&measure=${encodeURIComponent(measureHint)}`,
+    );
+    choices = boot.choices;
+    if (choices?.max_year) {
+      filterState.year = choices.max_year;
+      try { localStorage.setItem('livestock_last_year', String(choices.max_year)); } catch (_) { /* ignore */ }
+    }
+    try { localStorage.setItem('livestock_last_measure', measureHint); } catch (_) { /* ignore */ }
+    filterState.measure = measureHint;
+    renderFilterUI();
+    if (boot.grain && boot.grain_key && typeof getScopeGrainCacheMap === 'function') {
+      getScopeGrainCacheMap()[boot.grain_key] = {
+        key: boot.grain_key,
+        grain: boot.grain.grain || [],
+        y_label: boot.grain.y_label,
+        record_count: boot.grain.record_count,
+      };
+    }
+  } catch (_) {
+    const yearHint = Number(localStorage.getItem('livestock_last_year')) || 2023;
+    if (!filterState.year) filterState.year = yearHint;
+    if (typeof ensureScopeGrain === 'function') {
+      ensureScopeGrain({
+        farm_id: farmId,
+        year: yearHint,
+        month: 'All',
+        day: 'All',
+        measure: measureHint,
+        sex: ['Overall'],
+        treatment: ['Overall'],
+        breed: ['Overall'],
+        mob: ['Overall'],
+        eid: ['Overall'],
+      }).catch(() => {});
+    }
+    await loadChoices(bootCache);
+    if (choices?.max_year) {
+      filterState.year = choices.max_year;
+      try { localStorage.setItem('livestock_last_year', String(choices.max_year)); } catch (_) { /* ignore */ }
+    }
   }
-  try { localStorage.setItem('livestock_last_measure', filterState.measure); } catch (_) { /* ignore */ }
 
   if (onFilterChange) onFilterChange({ dimOnly: false });
   if (choices?.total_records != null) {

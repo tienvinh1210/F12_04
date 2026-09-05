@@ -1,5 +1,6 @@
 {
   "version": 2,
+  "regions": ["syd1"],
   "builds": [
     { "src": "api/light/index.py", "use": "@vercel/python" },
     { "src": "api/index.py", "use": "@vercel/python" },
