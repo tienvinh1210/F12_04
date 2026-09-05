@@ -161,9 +161,26 @@ async function renderSummary(container, options = {}) {
   const cache = typeof getScopeGrainCache === 'function' ? getScopeGrainCache() : null;
   const scopeOk = cache && cache.key === tsScopeKey(getFilters());
 
-  // Checkbox path: recompute KPIs in the browser from cached grain.
+  // Checkbox / cached grain path.
   if (!eidActive && (dimOnly || scopeOk) && cache && scopeOk) {
     paintSummary(container, assembleSummaryFromGrain(cache.grain, getFilters()));
+    return;
+  }
+
+  // Instant first paint from /filters/bootstrap summary (no grain wait).
+  const boot = window.__bootSummary;
+  const filters = getFilters();
+  const bootOk = !eidActive && !dimOnly && boot && boot.groups &&
+    filters.month === 'All' && String(filters.day) === 'All' &&
+    (filters.sex || ['Overall']).every((v) => v === 'Overall') &&
+    (filters.treatment || ['Overall']).every((v) => v === 'Overall') &&
+    (filters.breed || ['Overall']).every((v) => v === 'Overall') &&
+    (filters.mob || ['Overall']).every((v) => v === 'Overall');
+  if (bootOk) {
+    paintSummary(container, boot);
+    window.__bootSummary = null; // one-shot
+    // Warm grain in background for later filter/tab switches.
+    if (typeof ensureScopeGrain === 'function') ensureScopeGrain(filters).catch(() => {});
     return;
   }
 
@@ -173,7 +190,6 @@ async function renderSummary(container, options = {}) {
   }
 
   try {
-    const filters = getFilters();
     let data;
     if (eidActive) {
       data = await apiFetch('/summary/stats', { method: 'POST', body: JSON.stringify(filters) });

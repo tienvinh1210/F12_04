@@ -27,12 +27,14 @@ def filter_bootstrap(
     measure: str = Query("finalpweight"),
     user: Annotated[CurrentUser, Depends(get_current_user)] = None,
 ):
-    """One round-trip for dashboard first paint: choices + year grain."""
+    """Fast first paint: choices + summary KPIs (no full grain payload).
+
+    Grain for timeseries is fetched client-side after Summary paints.
+    """
     assert_farm_access(user, farm_id)
     choices = get_filter_choices(farm_id, user.is_admin)
     year = choices.get("max_year") or (choices.get("years") or [None])[0]
-    grain = None
-    grain_key = None
+    summary = None
     if year:
         filters = FilterState(
             farm_id=farm_id,
@@ -46,6 +48,5 @@ def filter_bootstrap(
             eid=["Overall"],
             measure=measure,
         )
-        grain = sql_agg.timeseries_grain_sql(filters, measure)
-        grain_key = f"{farm_id}|{year}|{measure}"
-    return {"choices": choices, "grain": grain, "grain_key": grain_key}
+        summary = sql_agg.summary_sql(filters, user.is_admin, measure)
+    return {"choices": choices, "summary": summary}
