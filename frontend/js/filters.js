@@ -181,13 +181,39 @@ function setFilterState(state) {
 
 async function initFilters(callback, bootCache = null) {
   onFilterChange = callback;
+
+  // Kick grain fetch in parallel with choices (year hint from last visit / KF default).
+  const farmId = getFarmId();
+  const yearHint = Number(localStorage.getItem('livestock_last_year')) || 2023;
+  const measureHint = localStorage.getItem('livestock_last_measure') || filterState.measure || 'finalpweight';
+  if (!filterState.year) filterState.year = yearHint;
+  if (typeof ensureScopeGrain === 'function') {
+    ensureScopeGrain({
+      farm_id: farmId,
+      year: yearHint,
+      month: 'All',
+      day: 'All',
+      measure: measureHint,
+      sex: ['Overall'],
+      treatment: ['Overall'],
+      breed: ['Overall'],
+      mob: ['Overall'],
+      eid: ['Overall'],
+    }).catch(() => {});
+  }
+
   await loadChoices(bootCache);
+  if (choices?.max_year) {
+    filterState.year = choices.max_year;
+    try { localStorage.setItem('livestock_last_year', String(choices.max_year)); } catch (_) { /* ignore */ }
+  }
+  try { localStorage.setItem('livestock_last_measure', filterState.measure); } catch (_) { /* ignore */ }
+
   if (onFilterChange) onFilterChange({ dimOnly: false });
-  // Record count comes from choices / grain — skip extra /data/query on boot.
   if (choices?.total_records != null) {
     updateRecordCountBadge(choices.total_records, choices.total_records);
   }
-  if (typeof prefetchTimeseriesGrain === 'function') prefetchTimeseriesGrain();
+  if (typeof scheduleMeasureGrainPrefetch === 'function') scheduleMeasureGrainPrefetch();
   document.getElementById('clear-filters')?.addEventListener('click', clearAllFilters);
   document.querySelectorAll('[data-select-all]').forEach(el => {
     el.addEventListener('click', (e) => { e.preventDefault(); selectAll(el.dataset.selectAll); });

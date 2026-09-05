@@ -163,17 +163,18 @@
         dataMgmtTab.classList.add('hidden');
         dataMgmtTab.setAttribute('aria-hidden', 'true');
       }
-      const bootCache = typeof takeBootCache === 'function' ? takeBootCache() : null;
       // Prefetch Plotly in the background after first paint path starts.
       setTimeout(() => { loadPlotly().catch(() => {}); }, 2500);
       initSavedViews();
+      const main = document.getElementById('page-content');
+      if (main && typeof showLoading === 'function') showLoading(main);
       initFilters((opts = {}) => {
         if (currentPage === 'customise') return;
         if (currentPage === 'data-management' && typeof resetDataManagementPage === 'function') {
           resetDataManagementPage();
         }
         renderCurrentPage(opts || {});
-      }, bootCache);
+      });
     });
   </script>
 </body>
