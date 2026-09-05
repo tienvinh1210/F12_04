@@ -167,7 +167,7 @@ admin-cli/admin.py
 ## Finished work (do not redo)
 
 - Vercel: inlined requirements, FastAPI `app` export, lazy heavy routers, Hobby daily cron, static routes, `/`→login
-- Perf: SQL agg path; timeseries grain + client cache shared w/ summary; slim login CSS; auth path avoids pandas
+- Perf: SQL agg path; timeseries grain + client cache; summary KPIs are observation-level (not median-of-daily-means); slim login CSS; auth path avoids pandas
 - Reports: multi-chart PDF/HTML; readable date axes; no bogus double units
 - Email: surface SMTP/dry-run errors; validate recipient; real send needs `EMAIL_DRY_RUN=false` + SMTP app password on Vercel
 - Data Mgmt: admin-only UI+API; pagination+jump; CSV; NaN JSON fix

@@ -365,139 +365,77 @@ def timeseries_grain_sql(filters: FilterState, measure: str) -> dict:
     return payload
 
 
-def summary_sql(filters: FilterState, is_admin: bool, measure: str) -> dict:
-    """Prefer the shared dimensional grain (same cache as timeseries) for speed."""
+def _fetch_measure_observations(
+    filters: FilterState, is_admin: bool, measure: str
+) -> list[dict]:
+    """One row per animal_data observation (for row-level summary KPIs)."""
+    from app.db import fetch_all
+
     measure = _validate_measure(measure)
-    # Non-EID path: reuse timeseries grain cache / query, then assemble windows.
-    eid_active = is_admin and any(v != "Overall" for v in (filters.eid or ["Overall"]))
-    if not eid_active:
-        payload = timeseries_grain_sql(filters, measure)
-        # Adapt short keys to the shape _series helpers / summary expect
-        grain = [
-            {
-                "date": r["d"],
-                "sex": r["s"],
-                "treatment": "__NONE__" if r["t"] == "No Treatment" else r["t"],
-                "breed": r["b"],
-                "mob": r["m"],
-                "value": r["v"],
-                "count": r["c"],
-                "min_v": r.get("mn", r["v"]),
-                "max_v": r.get("mx", r["v"]),
-            }
-            for r in payload["grain"]
-        ]
-        # Rebuild FilterState-style matching using full dim grain (all cols grouped)
-        dims = expand_dims_from_filters(filters, is_admin)
-        group_cols = ["sex", "treatment", "breed", "mob"]
-        combos = list(
-            itertools.product(
-                dims["sex"], dims["treatment"], dims["breed"], dims["mob"], dims["eid"]
-            )
-        )
-        all_overall = all(vals == ["Overall"] for vals in dims.values())
-        unit = MEASURE_UNITS.get(measure, "")
-        groups_out: list[dict] = []
-        for sex_v, treat_v, breed_v, mob_v, eid_v in combos:
-            combo = {
-                "sex": sex_v,
-                "treatment": treat_v,
-                "breed": breed_v,
-                "mob": mob_v,
-                "eid": eid_v if is_admin else "Overall",
-            }
-            matched = [r for r in grain if _combo_match(r, combo, group_cols)]
-            if not matched:
-                continue
-            full = FilterService.full_label_from_combo(combo, is_admin)
-            max_d = max(_as_date(r["date"]) for r in matched)
+    where, params = base_where_sql(filters, is_admin)
+    return fetch_all(
+        f"""
+        SELECT
+          date,
+          sex,
+          COALESCE(treatment, '__NONE__') AS treatment,
+          breed,
+          mob,
+          eid,
+          {measure}::float AS value
+        FROM animal_data
+        WHERE {where} AND {measure} IS NOT NULL
+        """,
+        tuple(params),
+    )
 
-            def window_rows(days: int | None, matched_rows=matched, max_date=max_d) -> list[dict]:
-                if days is None:
-                    return matched_rows
-                start = max_date - timedelta(days=days - 1)
-                return [r for r in matched_rows if _as_date(r["date"]) >= start]
 
-            def kpi(rows: list[dict], label: str) -> dict:
-                if not rows:
-                    return {
-                        "mean": 0,
-                        "min": 0,
-                        "max": 0,
-                        "median": 0,
-                        "count": 0,
-                        "unit": unit,
-                        "label": label,
-                    }
-                daily_means: list[float] = []
-                total_c = 0
-                wsum = 0.0
-                min_v = None
-                max_v = None
-                for r in rows:
-                    c = int(r["count"])
-                    v = float(r["value"])
-                    total_c += c
-                    wsum += v * c
-                    daily_means.append(v)
-                    mn = float(r["min_v"]) if r.get("min_v") is not None else v
-                    mx = float(r["max_v"]) if r.get("max_v") is not None else v
-                    min_v = mn if min_v is None else min(min_v, mn)
-                    max_v = mx if max_v is None else max(max_v, mx)
-                daily_means.sort()
-                mid = len(daily_means) // 2
-                if not daily_means:
-                    med = 0.0
-                elif len(daily_means) % 2:
-                    med = daily_means[mid]
-                else:
-                    med = (daily_means[mid - 1] + daily_means[mid]) / 2
-                return {
-                    "mean": round(wsum / total_c, 2) if total_c else 0,
-                    "min": round(min_v or 0, 2),
-                    "max": round(max_v or 0, 2),
-                    "median": round(med, 2),
-                    "count": total_c,
-                    "unit": unit,
-                    "label": label,
-                }
+def _kpi_from_values(values: list[float], label: str, unit: str) -> dict:
+    """Row-level KPI block — matches R / SummaryService.kpi_block semantics."""
+    if not values:
+        return {
+            "mean": 0,
+            "min": 0,
+            "max": 0,
+            "median": 0,
+            "count": 0,
+            "unit": unit,
+            "label": label,
+        }
+    values = sorted(values)
+    n = len(values)
+    mid = n // 2
+    if n % 2:
+        med = values[mid]
+    else:
+        med = (values[mid - 1] + values[mid]) / 2
+    return {
+        "mean": round(sum(values) / n, 2),
+        "min": round(values[0], 2),
+        "max": round(values[-1], 2),
+        "median": round(med, 2),
+        "count": n,
+        "unit": unit,
+        "label": label,
+    }
 
-            groups_out.append(
-                {
-                    "full_group": full,
-                    "windows": {
-                        "last_day": kpi(window_rows(1), f"Last Day ({max_d.strftime('%d/%m/%Y')})"),
-                        "last_15_days": kpi(window_rows(15), "Last 15 Days"),
-                        "last_month": kpi(window_rows(31), "Last Month"),
-                        "overall": kpi(matched, "Overall"),
-                    },
-                }
-            )
 
-        if len(groups_out) == 1 and all_overall:
-            groups_out[0]["full_group"] = FilterService.full_label_from_combo(
-                {
-                    "sex": "Overall",
-                    "treatment": "Overall",
-                    "breed": "Overall",
-                    "mob": "Overall",
-                    "eid": "Overall",
-                },
-                is_admin,
-            )
-        return {"groups": groups_out, "record_count": int(payload.get("record_count") or 0)}
+def summary_sql(filters: FilterState, is_admin: bool, measure: str) -> dict:
+    """Summary KPIs at observation level (mean/median/min/max/count over rows).
 
-    # EID-aware fallback (admin): previous active-group query path
-    grain = _fetch_daily_grain(filters, is_admin, measure)
+    Grain-based median (median of daily/group means) does not match R kpi_block /
+    pandas Series.median() on raw measure values — this path uses observations.
+    """
+    measure = _validate_measure(measure)
+    obs = _fetch_measure_observations(filters, is_admin, measure)
     dims = expand_dims_from_filters(filters, is_admin)
-    group_cols = _active_group_cols(dims)
+    group_cols = ["sex", "treatment", "breed", "mob", "eid"]
     combos = list(
         itertools.product(dims["sex"], dims["treatment"], dims["breed"], dims["mob"], dims["eid"])
     )
     all_overall = all(vals == ["Overall"] for vals in dims.values())
     unit = MEASURE_UNITS.get(measure, "")
-    groups_out = []
-    total_records = sum(int(r["count"]) for r in grain)
+    groups_out: list[dict] = []
 
     for sex_v, treat_v, breed_v, mob_v, eid_v in combos:
         combo = {
@@ -507,70 +445,30 @@ def summary_sql(filters: FilterState, is_admin: bool, measure: str) -> dict:
             "mob": mob_v,
             "eid": eid_v if is_admin else "Overall",
         }
-        matched = [r for r in grain if _combo_match(r, combo, group_cols)]
+        matched = [r for r in obs if _combo_match(r, combo, group_cols)]
         if not matched:
             continue
         full = FilterService.full_label_from_combo(combo, is_admin)
         max_d = max(_as_date(r["date"]) for r in matched)
 
-        def window_rows(days: int | None, matched_rows=matched, max_date=max_d) -> list[dict]:
+        def window_values(days: int | None, matched_rows=matched, max_date=max_d) -> list[float]:
             if days is None:
-                return matched_rows
-            start = max_date - timedelta(days=days - 1)
-            return [r for r in matched_rows if _as_date(r["date"]) >= start]
-
-        def kpi(rows: list[dict], label: str) -> dict:
-            if not rows:
-                return {
-                    "mean": 0,
-                    "min": 0,
-                    "max": 0,
-                    "median": 0,
-                    "count": 0,
-                    "unit": unit,
-                    "label": label,
-                }
-            daily_means = []
-            total_c = 0
-            wsum = 0.0
-            min_v = None
-            max_v = None
-            for r in rows:
-                c = int(r["count"])
-                v = float(r["value"])
-                total_c += c
-                wsum += v * c
-                daily_means.append(v)
-                mn = float(r["min_v"]) if r.get("min_v") is not None else v
-                mx = float(r["max_v"]) if r.get("max_v") is not None else v
-                min_v = mn if min_v is None else min(min_v, mn)
-                max_v = mx if max_v is None else max(max_v, mx)
-            daily_means.sort()
-            mid = len(daily_means) // 2
-            if not daily_means:
-                med = 0.0
-            elif len(daily_means) % 2:
-                med = daily_means[mid]
+                rows = matched_rows
             else:
-                med = (daily_means[mid - 1] + daily_means[mid]) / 2
-            return {
-                "mean": round(wsum / total_c, 2) if total_c else 0,
-                "min": round(min_v or 0, 2),
-                "max": round(max_v or 0, 2),
-                "median": round(med, 2),
-                "count": total_c,
-                "unit": unit,
-                "label": label,
-            }
+                start = max_date - timedelta(days=days - 1)
+                rows = [r for r in matched_rows if _as_date(r["date"]) >= start]
+            return [float(r["value"]) for r in rows]
 
         groups_out.append(
             {
                 "full_group": full,
                 "windows": {
-                    "last_day": kpi(window_rows(1), f"Last Day ({max_d.strftime('%d/%m/%Y')})"),
-                    "last_15_days": kpi(window_rows(15), "Last 15 Days"),
-                    "last_month": kpi(window_rows(31), "Last Month"),
-                    "overall": kpi(matched, "Overall"),
+                    "last_day": _kpi_from_values(
+                        window_values(1), f"Last Day ({max_d.strftime('%d/%m/%Y')})", unit
+                    ),
+                    "last_15_days": _kpi_from_values(window_values(15), "Last 15 Days", unit),
+                    "last_month": _kpi_from_values(window_values(31), "Last Month", unit),
+                    "overall": _kpi_from_values(window_values(None), "Overall", unit),
                 },
             }
         )
@@ -586,8 +484,8 @@ def summary_sql(filters: FilterState, is_admin: bool, measure: str) -> dict:
             },
             is_admin,
         )
+    return {"groups": groups_out, "record_count": len(obs)}
 
-    return {"groups": groups_out, "record_count": total_records}
 
 
 def distribution_sql(
