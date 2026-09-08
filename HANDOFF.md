@@ -60,7 +60,7 @@ API base (`frontend/js/api.js`): port 8000 → `/api`; other local ports → `ht
 
 | user | pass | is_admin | effects |
 |------|------|----------|---------|
-| admin | admin123 | true | EID filter, Data Mgmt, full rows |
+| F12_04 | COMP3988_2026 | true | EID filter, Data Mgmt, full rows |
 | owner | owner123 | true | same as admin |
 | user | user123 | false | EID → `*****`; no Data Mgmt tab; `/data/query` rows+CSV 403 |
 
@@ -226,7 +226,7 @@ Local secrets file: `backend/.env` (gitignored). Template: local `.env.example` 
 Verify:
 ```
 curl -s localhost:8000/api/health
-# login admin → Data Mgmt rows for year 2023; user → no Data Mgmt tab
+# login F12_04 → Data Mgmt rows for year 2023; user → no Data Mgmt tab
 ```
 
 ---
