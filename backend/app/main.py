@@ -15,6 +15,7 @@ from app.routers import (
     auth,
     charts,
     cohorts,
+    custom_charts,
     email_schedules,
     farms,
     filters,
@@ -49,6 +50,7 @@ app.include_router(filters.router, prefix="/api/filters", tags=["filters"])
 app.include_router(animals.router, prefix="/api/data", tags=["data"])
 app.include_router(summary.router, prefix="/api/summary", tags=["summary"])
 app.include_router(charts.router, prefix="/api/charts", tags=["charts"])
+app.include_router(custom_charts.router, prefix="/api/charts", tags=["charts"])
 app.include_router(cohorts.router, prefix="/api/cohorts", tags=["cohorts"])
 app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 app.include_router(email_schedules.router, prefix="/api/email", tags=["email"])

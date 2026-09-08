@@ -39,6 +39,10 @@ def _load(group: str) -> None:
 
         app.include_router(charts.router, prefix="/api/charts", tags=["charts"])
         app.include_router(summary.router, prefix="/api/summary", tags=["summary"])
+    elif group == "custom":
+        from app.routers import custom_charts
+
+        app.include_router(custom_charts.router, prefix="/api/charts", tags=["charts"])
     elif group == "data":
         from app.routers import animals, farms
 
@@ -57,12 +61,15 @@ def _load(group: str) -> None:
 @app.middleware("http")
 async def ensure_routers(request: Request, call_next):
     path = request.url.path
-    if path.startswith("/api/charts") or path.startswith("/api/summary"):
+    if path.startswith("/api/charts/custom"):
+        _load("custom")
+    elif path.startswith("/api/charts") or path.startswith("/api/summary"):
         _load("charts")
     elif path.startswith("/api/data") or path.startswith("/api/farms"):
         _load("data")
     elif path.startswith("/api/"):
         _load("charts")
+        _load("custom")
         _load("data")
         _load("heavy")
     return await call_next(request)
