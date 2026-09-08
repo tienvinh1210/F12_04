@@ -60,7 +60,7 @@ API base (`frontend/js/api.js`): port 8000 → `/api`; other local ports → `ht
 
 | user | pass | is_admin | effects |
 |------|------|----------|---------|
-| F12_04 | COMP3988_2026 | true | EID filter, Data Mgmt, full rows |
+| admin | admin123 | true | EID filter, Data Mgmt, full rows |
 | owner | owner123 | true | same as admin |
 | user | user123 | false | EID → `*****`; no Data Mgmt tab; `/data/query` rows+CSV 403 |
 
@@ -143,23 +143,24 @@ Schemas: `backend/app/models/schemas.py`
 
 ## File ownership (edit targets)
 
-Four-person split (exclusive paths, merge protocol): **[TEAM_SPLIT.md](TEAM_SPLIT.md)**  
-Branches: `module/auth-admin` · `module/core-analytics` · `module/data-customise` · `module/reports-email`
-
 ```
-api/light/index.py + api/light/requirements.txt     # slim health/auth/filters (P4 deploy; P1/P2 logic)
-api/index.py, api/requirements.txt, vercel.json     # deploy/cold-start (P4)
-backend/app/main.py                                 # local server+static (shared — ask)
-backend/app/config.py, db.py, auth/*                # config (P4) / auth (P1)
-backend/app/routers/charts.py                      # timeseries/distribution (P2)
-backend/app/routers/custom_charts.py                # /charts/custom (P3)
-backend/app/services/sql_agg.py                     # SQL charts/summary/count (P2)
-backend/app/services/filter_service.py              # pandas (P3)
-backend/app/services/report_generator.py            # PDF/HTML (P4)
-backend/app/services/email_service.py               # SMTP (P4)
-frontend/js/pages/*.js                              # one owner per file — see TEAM_SPLIT.md
-database/001_schema.sql | scripts/seed.py           # P1
-customizechart.md                                   # P3
+api/light/index.py + api/light/requirements.txt     # slim health/auth/filters
+api/index.py, api/requirements.txt, vercel.json     # deploy/cold-start (heavy)
+backend/app/main.py                                 # local server+static
+backend/app/config.py, db.py, auth/*                # config/auth
+backend/app/routers/*.py                            # HTTP
+backend/app/services/sql_agg.py                     # SQL charts/summary/count (perf)
+backend/app/services/filter_service.py              # pandas load/filter/group/records
+backend/app/services/data_service.py                # thin wrapper
+backend/app/services/chart_service.py               # cohorts helpers
+backend/app/services/report_generator.py            # PDF/HTML (+ matplotlib axes)
+backend/app/services/email_service.py               # SMTP; EMAIL_DRY_RUN short-circuit
+backend/app/utils/anonymize.py
+frontend/js/api.js|auth.js|filters.js|saved-views.js|utils.js
+frontend/js/pages/*.js | dashboard.html | login.html | css/*
+database/001_schema.sql | scripts/seed.py | Data.csv
+customizechart.md                                   # open customise product rules
+admin-cli/admin.py
 ```
 
 ---
@@ -225,7 +226,7 @@ Local secrets file: `backend/.env` (gitignored). Template: local `.env.example` 
 Verify:
 ```
 curl -s localhost:8000/api/health
-# login F12_04 → Data Mgmt rows for year 2023; user → no Data Mgmt tab
+# login admin → Data Mgmt rows for year 2023; user → no Data Mgmt tab
 ```
 
 ---
