@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+backend/.env
+*.duckdb
+.DS_Store
+.vercel
+.streamlit/secrets.toml
